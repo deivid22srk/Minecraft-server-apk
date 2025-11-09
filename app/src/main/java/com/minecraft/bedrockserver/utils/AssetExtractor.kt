@@ -8,7 +8,7 @@ import java.io.FileOutputStream
 
 object AssetExtractor {
     private const val TAG = "AssetExtractor"
-    private const val EXTRACTION_VERSION = "1.1"
+    private const val EXTRACTION_VERSION = "1.2"
     private const val PREFS_NAME = "asset_extractor"
     private const val KEY_VERSION = "extracted_version"
     
@@ -39,16 +39,26 @@ object AssetExtractor {
         
         val phpBinary = File(baseDir, "bin/php7/bin/php")
         if (phpBinary.exists()) {
-            phpBinary.setExecutable(true, false)
+            setExecutablePermissions(phpBinary)
             Log.i(TAG, "PHP binary found and set executable: ${phpBinary.absolutePath}")
         } else {
             Log.e(TAG, "PHP binary not found at: ${phpBinary.absolutePath}")
         }
         
+        val binDir = File(baseDir, "bin/php7/bin")
+        if (binDir.exists()) {
+            binDir.listFiles()?.forEach { file ->
+                if (file.isFile) {
+                    setExecutablePermissions(file)
+                }
+            }
+            Log.i(TAG, "PHP binaries made executable in: ${binDir.absolutePath}")
+        }
+        
         val libPath = File(baseDir, "bin/php7/lib")
         if (libPath.exists()) {
-            libPath.listFiles()?.filter { it.extension == "so" }?.forEach { 
-                it.setExecutable(true, false) 
+            libPath.walk().filter { it.extension == "so" }.forEach { 
+                setExecutablePermissions(it)
             }
             Log.i(TAG, "PHP libraries found at: ${libPath.absolutePath}")
         }
@@ -93,12 +103,24 @@ object AssetExtractor {
             }
             
             if (destFile.extension == "so" || destFile.name == "php" || destFile.extension == "sh") {
-                destFile.setExecutable(true, false)
+                setExecutablePermissions(destFile)
             }
             
             Log.d(TAG, "Extracted: ${destFile.absolutePath}")
         } catch (e: Exception) {
             Log.e(TAG, "Error copying $assetPath to $destFile", e)
+        }
+    }
+    
+    private fun setExecutablePermissions(file: File) {
+        try {
+            Runtime.getRuntime().exec(arrayOf("chmod", "755", file.absolutePath)).waitFor()
+            file.setExecutable(true, false)
+            file.setReadable(true, false)
+            Log.d(TAG, "Set executable: ${file.absolutePath}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to set permissions for ${file.absolutePath}: ${e.message}")
+            file.setExecutable(true, false)
         }
     }
     
