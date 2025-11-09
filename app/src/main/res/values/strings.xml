@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Minecraft Server</string>
+    <string name="server_status">Status do Servidor</string>
+    <string name="start_server">Iniciar Servidor</string>
+    <string name="stop_server">Parar Servidor</string>
+    <string name="server_running">Servidor rodando</string>
+    <string name="server_stopped">Servidor parado</string>
+    <string name="server_address">Endereço do Servidor</string>
+    <string name="server_port">Porta</string>
+    <string name="players_online">Jogadores Online</string>
+    <string name="settings">Configurações</string>
+    <string name="server_properties">Propriedades do Servidor</string>
+    <string name="import_from_aternos">Importar do Aternos</string>
+    <string name="enable_coordinates">Ativar Coordenadas</string>
+    <string name="keep_inventory">Manter Inventário ao Morrer</string>
+    <string name="console">Console</string>
+    <string name="server_name">Nome do Servidor</string>
+    <string name="max_players">Máximo de Jogadores</string>
+    <string name="game_mode">Modo de Jogo</string>
+    <string name="difficulty">Dificuldade</string>
+</resources>
