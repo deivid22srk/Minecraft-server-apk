@@ -8,7 +8,7 @@ import java.io.FileOutputStream
 
 object AssetExtractor {
     private const val TAG = "AssetExtractor"
-    private const val EXTRACTION_VERSION = "1.0"
+    private const val EXTRACTION_VERSION = "1.1"
     private const val PREFS_NAME = "asset_extractor"
     private const val KEY_VERSION = "extracted_version"
     
@@ -35,14 +35,22 @@ object AssetExtractor {
         val abi = getSupportedAbi()
         Log.i(TAG, "Detected ABI: $abi")
         
-        val phpDir = File(baseDir, "bin/php7")
-        phpDir.mkdirs()
+        extractAssetFolder(context, "php/$abi", baseDir)
         
-        extractAssetFolder(context, "php/$abi", phpDir)
+        val phpBinary = File(baseDir, "bin/php7/bin/php")
+        if (phpBinary.exists()) {
+            phpBinary.setExecutable(true, false)
+            Log.i(TAG, "PHP binary found and set executable: ${phpBinary.absolutePath}")
+        } else {
+            Log.e(TAG, "PHP binary not found at: ${phpBinary.absolutePath}")
+        }
         
-        val binDir = File(phpDir, "bin")
-        if (binDir.exists()) {
-            File(binDir, "php").setExecutable(true, false)
+        val libPath = File(baseDir, "bin/php7/lib")
+        if (libPath.exists()) {
+            libPath.listFiles()?.filter { it.extension == "so" }?.forEach { 
+                it.setExecutable(true, false) 
+            }
+            Log.i(TAG, "PHP libraries found at: ${libPath.absolutePath}")
         }
         
         val pocketMineDir = File(baseDir, "pocketmine")
