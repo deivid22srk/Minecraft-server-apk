@@ -26,8 +26,33 @@ jobs:
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
+
+    - name: Download PHP Binary for Android (ARM64)
+      run: |
+        mkdir -p app/src/main/assets/php/arm64-v8a
+        cd app/src/main/assets/php/arm64-v8a
+        wget -q https://github.com/pmmp/PHP-Binaries/releases/latest/download/PHP-8.4-Android-arm64-PM5.tar.gz
+        tar -xzf PHP-8.4-Android-arm64-PM5.tar.gz
+        rm PHP-8.4-Android-arm64-PM5.tar.gz
+        cd $GITHUB_WORKSPACE
+
+    - name: Download PocketMine-MP
+      run: |
+        mkdir -p app/src/main/assets/pocketmine
+        cd app/src/main/assets/pocketmine
+        wget -q https://github.com/pmmp/PocketMine-MP/releases/latest/download/PocketMine-MP.phar
+        wget -q https://github.com/pmmp/PocketMine-MP/raw/stable/start.sh
+        chmod +x start.sh
+        cd $GITHUB_WORKSPACE
+
+    - name: Verify Downloaded Files
+      run: |
+        echo "=== PHP ARM64 ==="
+        ls -lh app/src/main/assets/php/arm64-v8a/
+        echo "=== PocketMine-MP ==="
+        ls -lh app/src/main/assets/pocketmine/
       
-    - name: Build with Gradle
+    - name: Build Debug APK
       run: ./gradlew assembleDebug --stacktrace
 
     - name: Upload Debug APK
@@ -35,14 +60,3 @@ jobs:
       with:
         name: Minecraft-Server-Debug
         path: ./app/build/outputs/apk/debug/app-debug.apk
-        
-    - name: Build Release APK
-      run: ./gradlew assembleRelease --stacktrace
-      continue-on-error: true
-      
-    - name: Upload Release APK
-      uses: actions/upload-artifact@v4
-      if: success()
-      with:
-        name: Minecraft-Server-Release
-        path: ./app/build/outputs/apk/release/app-release-unsigned.apk

@@ -3,18 +3,23 @@ package com.minecraft.bedrockserver.server
 import android.content.Context
 import android.util.Log
 import com.minecraft.bedrockserver.data.ServerConfig
+import com.minecraft.bedrockserver.utils.AssetExtractor
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
+import java.io.OutputStreamWriter
 import java.net.Inet4Address
 import java.net.NetworkInterface
 
 class MinecraftServer(private val context: Context) {
     private val TAG = "MinecraftServer"
     private var serverProcess: Process? = null
+    private var outputReaderJob: Job? = null
+    private var errorReaderJob: Job? = null
+    private var commandWriter: OutputStreamWriter? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
     private val _consoleOutput = MutableStateFlow<List<String>>(emptyList())
@@ -26,43 +31,17 @@ class MinecraftServer(private val context: Context) {
     private val _playersOnline = MutableStateFlow(0)
     val playersOnline: StateFlow<Int> = _playersOnline
     
-    private val serverDir: File
-        get() = File(context.filesDir, "bedrock_server")
+    private lateinit var serverDir: File
     
     init {
-        setupServerDirectory()
-    }
-    
-    private fun setupServerDirectory() {
-        if (!serverDir.exists()) {
-            serverDir.mkdirs()
-        }
-        
-        File(serverDir, "worlds").mkdirs()
-        File(serverDir, "plugins").mkdirs()
-        
-        val propertiesFile = File(serverDir, "server.properties")
-        if (!propertiesFile.exists()) {
-            val config = ServerConfig.load(context)
-            propertiesFile.writeText(config.toProperties())
-        }
-        
-        setupPocketMine()
-    }
-    
-    private fun setupPocketMine() {
-        val pocketMineDir = File(serverDir, "PocketMine-MP")
-        if (!pocketMineDir.exists()) {
-            pocketMineDir.mkdirs()
-            
-            val startScript = File(serverDir, "start.sh")
-            startScript.writeText("""
-                #!/bin/bash
-                cd ${serverDir.absolutePath}
-                export LD_LIBRARY_PATH=${serverDir.absolutePath}/bin/lib
-                ${serverDir.absolutePath}/bin/php7/bin/php ${serverDir.absolutePath}/PocketMine-MP.phar --no-wizard
-            """.trimIndent())
-            startScript.setExecutable(true)
+        scope.launch {
+            try {
+                serverDir = AssetExtractor.extractIfNeeded(context)
+                addConsoleLog("✓ Binários extraídos com sucesso")
+            } catch (e: Exception) {
+                Log.e(TAG, "Erro ao extrair assets", e)
+                addConsoleLog("✗ Erro ao extrair binários: ${e.message}")
+            }
         }
     }
     
@@ -72,47 +51,198 @@ class MinecraftServer(private val context: Context) {
             return
         }
         
+        withContext(Dispatchers.IO) {
+            try {
+                updateServerProperties(config)
+                
+                addConsoleLog("Iniciando Minecraft Bedrock Server v1.21.120.4...")
+                addConsoleLog("Porta: ${config.port}")
+                
+                val localIp = getLocalIpAddress()
+                val publicIp = getPublicIpAddress()
+                
+                addConsoleLog("Endereço Local: $localIp:${config.port}")
+                addConsoleLog("Endereço Público: $publicIp:${config.port}")
+                
+                if (config.publicServer) {
+                    addConsoleLog("⚠️ Servidor público ativado")
+                    addConsoleLog("Certifique-se de configurar o Port Forwarding no seu roteador")
+                    addConsoleLog("Porta a ser redirecionada: ${config.port}")
+                }
+                
+                startPocketMineServer()
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Erro ao iniciar servidor", e)
+                addConsoleLog("✗ Erro ao iniciar servidor: ${e.message}")
+                addConsoleLog("✗ Stack trace: ${e.stackTraceToString()}")
+                _isRunning.value = false
+            }
+        }
+    }
+    
+    private suspend fun startPocketMineServer() = withContext(Dispatchers.IO) {
         try {
-            updateServerProperties(config)
-            updateGameRules(config)
-            
-            addConsoleLog("Iniciando Minecraft Bedrock Server v1.21.120.4...")
-            addConsoleLog("Porta: ${config.port}")
-            
-            val localIp = getLocalIpAddress()
-            val publicIp = getPublicIpAddress()
-            
-            addConsoleLog("Endereço Local: $localIp:${config.port}")
-            addConsoleLog("Endereço Público: $publicIp:${config.port}")
-            
-            if (config.publicServer) {
-                addConsoleLog("⚠️ Servidor público ativado")
-                addConsoleLog("Certifique-se de configurar o Port Forwarding no seu roteador")
-                addConsoleLog("Porta a ser redirecionada: ${config.port}")
+            if (!::serverDir.isInitialized) {
+                serverDir = AssetExtractor.extractIfNeeded(context)
             }
             
+            val phpBinary = File(serverDir, "bin/php7/bin/php")
+            val pharFile = File(serverDir, "pocketmine/PocketMine-MP.phar")
+            
+            if (!phpBinary.exists()) {
+                addConsoleLog("✗ Binário PHP não encontrado: ${phpBinary.absolutePath}")
+                return@withContext
+            }
+            
+            if (!pharFile.exists()) {
+                addConsoleLog("✗ PocketMine-MP.phar não encontrado: ${pharFile.absolutePath}")
+                return@withContext
+            }
+            
+            phpBinary.setExecutable(true, false)
+            
+            try {
+                Runtime.getRuntime().exec(arrayOf("chmod", "755", phpBinary.absolutePath)).waitFor()
+                Log.d(TAG, "chmod 755 applied to PHP binary")
+            } catch (e: Exception) {
+                Log.w(TAG, "chmod failed: ${e.message}")
+            }
+            
+            if (!phpBinary.canExecute()) {
+                addConsoleLog("⚠️ PHP binary não tem permissão de execução, tentando workaround...")
+            }
+            
+            val libPath = File(serverDir, "bin/php7/lib")
+            if (!libPath.exists()) {
+                addConsoleLog("✗ Bibliotecas PHP não encontradas: ${libPath.absolutePath}")
+                return@withContext
+            }
+            
+            val phpIni = File(serverDir, "bin/php7/bin/php.ini")
+            val phpIniArg = if (phpIni.exists()) "-c ${phpIni.absolutePath}" else ""
+            
+            val processBuilder = ProcessBuilder(
+                "sh", "-c",
+                "export LD_LIBRARY_PATH='${libPath.absolutePath}' && " +
+                "export HOME='${serverDir.absolutePath}' && " +
+                "export TMPDIR='${context.cacheDir.absolutePath}' && " +
+                "cd '${serverDir.absolutePath}' && " +
+                "'${phpBinary.absolutePath}' $phpIniArg '${pharFile.absolutePath}' " +
+                "--data='${serverDir.absolutePath}' " +
+                "--plugins='${serverDir.absolutePath}/plugins' " +
+                "--no-wizard " +
+                "--enable-ansi 2>&1"
+            )
+            
+            processBuilder.directory(serverDir)
+            
+            addConsoleLog("Comando: sh -c \"...\"")
+            addConsoleLog("Executando: ${phpBinary.absolutePath}")
+            addConsoleLog("PHAR: ${pharFile.absolutePath}")
+            addConsoleLog("Diretório: ${serverDir.absolutePath}")
+            addConsoleLog("LD_LIBRARY_PATH: ${libPath.absolutePath}")
+            
+            serverProcess = processBuilder.start()
+            
+            delay(1000)
+            
+            if (serverProcess?.isAlive != true) {
+                addConsoleLog("✗ Processo PHP morreu imediatamente após start()")
+                try {
+                    val exitCode = serverProcess?.exitValue() ?: -1
+                    addConsoleLog("✗ Exit code: $exitCode")
+                    
+                    val errorStream = serverProcess?.errorStream
+                    if (errorStream != null) {
+                        val errorReader = BufferedReader(InputStreamReader(errorStream))
+                        val errors = errorReader.readLines()
+                        errors.forEach { addConsoleLog("ERROR: $it") }
+                    }
+                } catch (e: Exception) {
+                    addConsoleLog("✗ Não foi possível ler erro: ${e.message}")
+                }
+                _isRunning.value = false
+                return@withContext
+            }
+            
+            commandWriter = OutputStreamWriter(serverProcess!!.outputStream)
             _isRunning.value = true
             
-            scope.launch {
-                simulateServerProcess(config)
+            errorReaderJob = scope.launch {
+                try {
+                    val errorReader = BufferedReader(InputStreamReader(serverProcess!!.errorStream))
+                    var line: String?
+                    while (errorReader.readLine().also { line = it } != null && _isRunning.value) {
+                        line?.let { addConsoleLog("[ERROR] $it") }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Erro ao ler stderr", e)
+                }
             }
             
-            addConsoleLog("✓ Servidor iniciado com sucesso!")
-            addConsoleLog("Jogadores podem se conectar usando: $publicIp:${config.port}")
+            outputReaderJob = scope.launch {
+                try {
+                    val reader = BufferedReader(InputStreamReader(serverProcess!!.inputStream))
+                    var line: String?
+                    
+                    addConsoleLog("✓ Processo PHP iniciado")
+                    addConsoleLog("✓ Aguardando output do PocketMine-MP...")
+                    
+                    while (reader.readLine().also { line = it } != null && _isRunning.value) {
+                        line?.let { 
+                            processServerOutput(it)
+                            addConsoleLog(it)
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (_isRunning.value) {
+                        Log.e(TAG, "Erro ao ler output do servidor", e)
+                        addConsoleLog("✗ Erro ao ler output: ${e.message}")
+                    }
+                } finally {
+                    withContext(Dispatchers.Main) {
+                        if (_isRunning.value) {
+                            val exitCode = serverProcess?.exitValue() ?: -1
+                            addConsoleLog("✗ Servidor parou inesperadamente (exit code: $exitCode)")
+                            stopServer()
+                        }
+                    }
+                }
+            }
+            
+            delay(2000)
+            
+            if (serverProcess?.isAlive == true) {
+                addConsoleLog("✓ Servidor iniciado com sucesso!")
+                val publicIp = getPublicIpAddress()
+                val config = ServerConfig.load(context)
+                addConsoleLog("Jogadores podem se conectar usando: $publicIp:${config.port}")
+            } else {
+                addConsoleLog("✗ Servidor falhou ao iniciar")
+                _isRunning.value = false
+            }
             
         } catch (e: Exception) {
-            Log.e(TAG, "Erro ao iniciar servidor", e)
-            addConsoleLog("✗ Erro ao iniciar servidor: ${e.message}")
+            Log.e(TAG, "Erro ao iniciar processo PocketMine", e)
+            addConsoleLog("✗ Erro crítico: ${e.message}")
             _isRunning.value = false
         }
     }
     
-    private suspend fun simulateServerProcess(config: ServerConfig) {
-        while (_isRunning.value) {
-            delay(5000)
-            
-            if (Math.random() < 0.1) {
-                addConsoleLog("[INFO] Server tick ${System.currentTimeMillis()}")
+    private fun processServerOutput(line: String) {
+        when {
+            line.contains("Done (") && line.contains("s)!") -> {
+                addConsoleLog("✓ Servidor carregado completamente!")
+            }
+            line.contains("logged in with entity id") -> {
+                _playersOnline.value++
+            }
+            line.contains("logged out due to") || line.contains("left the game") -> {
+                _playersOnline.value = maxOf(0, _playersOnline.value - 1)
+            }
+            line.contains("ERROR") || line.contains("CRITICAL") -> {
+                Log.e(TAG, "Server error: $line")
             }
         }
     }
@@ -120,10 +250,34 @@ class MinecraftServer(private val context: Context) {
     fun stopServer() {
         try {
             addConsoleLog("Parando servidor...")
+            
+            try {
+                executeCommand("stop")
+                Thread.sleep(3000)
+            } catch (e: Exception) {
+                Log.w(TAG, "Erro ao enviar comando stop", e)
+            }
+            
             serverProcess?.destroy()
+            
+            outputReaderJob?.cancel()
+            errorReaderJob?.cancel()
+            commandWriter?.close()
+            
+            serverProcess?.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+            
+            if (serverProcess?.isAlive == true) {
+                serverProcess?.destroyForcibly()
+            }
+            
             serverProcess = null
+            commandWriter = null
+            outputReaderJob = null
+            errorReaderJob = null
+            
             _isRunning.value = false
             _playersOnline.value = 0
+            
             addConsoleLog("✓ Servidor parado")
         } catch (e: Exception) {
             Log.e(TAG, "Erro ao parar servidor", e)
@@ -134,26 +288,13 @@ class MinecraftServer(private val context: Context) {
     private fun updateServerProperties(config: ServerConfig) {
         val propertiesFile = File(serverDir, "server.properties")
         propertiesFile.writeText(config.toProperties())
-    }
-    
-    private fun updateGameRules(config: ServerConfig) {
-        val worldDir = File(serverDir, "worlds/Bedrock level")
-        worldDir.mkdirs()
         
-        val levelDatPath = File(worldDir, "level.dat")
-        
-        val gameRules = mutableListOf<String>()
-        if (config.keepInventory) {
-            gameRules.add("gamerule keepInventory true")
-        }
-        if (config.showCoordinates) {
-            gameRules.add("gamerule showcoordinates true")
-        }
-        
-        val commandFile = File(serverDir, "commands.txt")
-        commandFile.writeText(gameRules.joinToString("\n"))
-        
-        addConsoleLog("Game rules configuradas:")
+        addConsoleLog("Configurações atualizadas:")
+        addConsoleLog("  - Nome: ${config.serverName}")
+        addConsoleLog("  - Modo de jogo: ${config.gameMode}")
+        addConsoleLog("  - Dificuldade: ${config.difficulty}")
+        addConsoleLog("  - Jogadores máximos: ${config.maxPlayers}")
+        addConsoleLog("  - PvP: ${config.pvp}")
         addConsoleLog("  - Keep Inventory: ${config.keepInventory}")
         addConsoleLog("  - Show Coordinates: ${config.showCoordinates}")
     }
@@ -165,23 +306,15 @@ class MinecraftServer(private val context: Context) {
         }
         
         try {
-            addConsoleLog("> $command")
-            
-            when {
-                command.startsWith("gamerule") -> {
-                    addConsoleLog("✓ Game rule aplicada")
+            scope.launch(Dispatchers.IO) {
+                commandWriter?.apply {
+                    write("$command\n")
+                    flush()
                 }
-                command == "list" -> {
-                    addConsoleLog("Jogadores online: ${_playersOnline.value}/${ServerConfig.load(context).maxPlayers}")
-                }
-                command == "help" -> {
-                    addConsoleLog("Comandos disponíveis: list, gamerule, stop, whitelist")
-                }
-                else -> {
-                    addConsoleLog("✓ Comando executado")
-                }
+                addConsoleLog("> $command")
             }
         } catch (e: Exception) {
+            Log.e(TAG, "Erro ao executar comando", e)
             addConsoleLog("✗ Erro ao executar comando: ${e.message}")
         }
     }
@@ -219,7 +352,7 @@ class MinecraftServer(private val context: Context) {
             .format(java.util.Date())
         val logMessage = "[$timestamp] $message"
         
-        _consoleOutput.value = (_consoleOutput.value + logMessage).takeLast(100)
+        _consoleOutput.value = (_consoleOutput.value + logMessage).takeLast(200)
         Log.d(TAG, message)
     }
     

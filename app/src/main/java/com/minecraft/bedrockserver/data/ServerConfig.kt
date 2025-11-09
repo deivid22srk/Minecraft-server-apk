@@ -10,7 +10,7 @@ data class ServerConfig(
     val gameMode: String = "survival",
     val difficulty: String = "normal",
     val showCoordinates: Boolean = true,
-    val keepInventory: boolean = true,
+    val keepInventory: Boolean = true,
     val pvp: Boolean = true,
     val port: Int = 19132,
     val publicServer: Boolean = true,
