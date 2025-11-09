@@ -118,7 +118,12 @@ class MinecraftServer(private val context: Context) {
                 addConsoleLog("⚠️ PHP binary não tem permissão de execução, tentando workaround...")
             }
             
-            // Testar o binário PHP primeiro
+            val libPath = File(serverDir, "bin/php7/lib")
+            if (!libPath.exists()) {
+                addConsoleLog("✗ Bibliotecas PHP não encontradas: ${libPath.absolutePath}")
+                return@withContext
+            }
+            
             addConsoleLog("Testando compatibilidade do binário PHP...")
             try {
                 val testProcess = ProcessBuilder(
@@ -151,12 +156,6 @@ class MinecraftServer(private val context: Context) {
             } catch (e: Exception) {
                 addConsoleLog("⚠️ Erro ao testar PHP: ${e.message}")
                 Log.w(TAG, "PHP test failed", e)
-            }
-            
-            val libPath = File(serverDir, "bin/php7/lib")
-            if (!libPath.exists()) {
-                addConsoleLog("✗ Bibliotecas PHP não encontradas: ${libPath.absolutePath}")
-                return@withContext
             }
             
             val phpIni = File(serverDir, "bin/php7/bin/php.ini")
