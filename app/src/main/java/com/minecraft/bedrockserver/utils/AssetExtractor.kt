@@ -10,7 +10,7 @@ import java.util.zip.ZipInputStream
 
 object AssetExtractor {
     private const val TAG = "AssetExtractor"
-    private const val EXTRACTION_VERSION = "1.5"
+    private const val EXTRACTION_VERSION = "1.6"
     private const val PREFS_NAME = "asset_extractor"
     private const val KEY_VERSION = "extracted_version"
     
@@ -50,9 +50,26 @@ object AssetExtractor {
         extractAssetFolder(context, "php/$abi", binDir)
         
         val phpBinary = File(binDir, "bin/php7/bin/php")
-        if (!phpBinary.exists()) {
-            Log.i(TAG, "PHP binary not found, downloading...")
+        val libPath = File(binDir, "bin/php7/lib")
+        
+        // Verificar se binário E bibliotecas existem
+        val hasSoLibraries = libPath.exists() && 
+                             libPath.walk().any { it.extension == "so" }
+        
+        if (!phpBinary.exists() || !hasSoLibraries) {
+            if (!phpBinary.exists()) {
+                Log.i(TAG, "PHP binary not found, downloading...")
+            } else {
+                Log.i(TAG, "PHP libraries (.so) not found, downloading complete package...")
+            }
+            
             try {
+                // Limpar diretório antes de baixar
+                if (binDir.exists()) {
+                    Log.i(TAG, "Cleaning existing bin directory...")
+                    binDir.deleteRecursively()
+                    binDir.mkdirs()
+                }
                 downloadAndExtractPhpBinary(binDir)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to download PHP binary", e)
@@ -78,7 +95,7 @@ object AssetExtractor {
             Log.i(TAG, "PHP binaries made executable in: ${phpBinDir.absolutePath}")
         }
         
-        val libPath = File(binDir, "bin/php7/lib")
+        // libPath já foi declarado acima
         if (libPath.exists()) {
             var soCount = 0
             libPath.walk().filter { it.extension == "so" }.forEach { 
@@ -88,8 +105,15 @@ object AssetExtractor {
             }
             Log.i(TAG, "PHP libraries found at: ${libPath.absolutePath}")
             Log.i(TAG, "Configured $soCount .so libraries")
+            
+            if (soCount == 0) {
+                Log.e(TAG, "ERROR: No .so libraries found in ${libPath.absolutePath}")
+                Log.e(TAG, "PHP will not be able to run without shared libraries")
+                throw RuntimeException("Bibliotecas .so do PHP não encontradas. Tente reinstalar o aplicativo.")
+            }
         } else {
             Log.e(TAG, "Library path not found: ${libPath.absolutePath}")
+            throw RuntimeException("Diretório de bibliotecas PHP não existe")
         }
         
         // Criar symlink do binário para dataDir para acesso fácil

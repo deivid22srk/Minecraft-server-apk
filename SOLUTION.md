@@ -22,7 +22,7 @@ No contexto do app, isso pode ocorrer por:
 
 ## ✅ Soluções Implementadas
 
-### 🆕 SOLUÇÃO FINAL - Separação de Binários e Dados (v1.5)
+### 🆕 SOLUÇÃO FINAL - Separação de Binários e Dados + Download Forçado (v1.6)
 
 #### Problema: error=13, Permission denied
 Após corrigir o exit code 126, surgiu um novo erro:
@@ -79,6 +79,43 @@ val pharFile = File(serverDir, "pocketmine/PocketMine-MP.phar")
 - ✅ Dados do servidor persistem mesmo após limpeza de cache
 - ✅ Mundos, plugins e configurações ficam seguros em `filesDir`
 - ✅ Compatível com Android 10, 11, 12, 13, 14+
+
+#### Problema Adicional: Bibliotecas .so Faltando (v1.6)
+
+Após implementar a separação de diretórios, surgiu outro problema:
+```
+14:52:14.928 I/AssetExtractor: Configured 0 .so libraries
+```
+
+**Causa:** Os assets do GitHub Actions incluem o binário `php` mas **não incluem as bibliotecas compartilhadas `.so`** necessárias. O código verificava apenas se o binário PHP existe, mas não se as bibliotecas também existem.
+
+**Solução:** Verificar se as bibliotecas `.so` existem, e se não existirem, fazer download completo:
+
+```kotlin
+val phpBinary = File(binDir, "bin/php7/bin/php")
+val libPath = File(binDir, "bin/php7/lib")
+
+// Verificar se binário E bibliotecas existem
+val hasSoLibraries = libPath.exists() && 
+                     libPath.walk().any { it.extension == "so" }
+
+if (!phpBinary.exists() || !hasSoLibraries) {
+    // Limpar e baixar pacote completo
+    binDir.deleteRecursively()
+    downloadAndExtractPhpBinary(binDir)
+}
+
+// Validar que bibliotecas foram instaladas
+if (soCount == 0) {
+    throw RuntimeException("Bibliotecas .so do PHP não encontradas")
+}
+```
+
+**Mudanças:**
+1. ✅ Verifica se bibliotecas `.so` existem, não apenas o binário
+2. ✅ Limpa diretório antes de download para evitar arquivos parciais
+3. ✅ Lança erro se nenhuma biblioteca for encontrada após extração
+4. ✅ Logs informativos sobre o motivo do download
 
 ### 1. Correções no MinecraftServer.kt
 
