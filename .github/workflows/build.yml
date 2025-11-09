@@ -26,6 +26,42 @@ jobs:
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
+
+    - name: Download PHP Binary for Android (ARM64)
+      run: |
+        mkdir -p app/src/main/assets/php/arm64-v8a
+        cd app/src/main/assets/php/arm64-v8a
+        wget -q https://github.com/pmmp/PHP-Binaries/releases/download/php-8.2.24-pmmp/PHP-8.2.24-ARM64.tar.gz
+        tar -xzf PHP-8.2.24-ARM64.tar.gz
+        rm PHP-8.2.24-ARM64.tar.gz
+        cd $GITHUB_WORKSPACE
+
+    - name: Download PHP Binary for Android (ARMv7)
+      run: |
+        mkdir -p app/src/main/assets/php/armeabi-v7a
+        cd app/src/main/assets/php/armeabi-v7a
+        wget -q https://github.com/pmmp/PHP-Binaries/releases/download/php-8.2.24-pmmp/PHP-8.2.24-ARM.tar.gz
+        tar -xzf PHP-8.2.24-ARM.tar.gz
+        rm PHP-8.2.24-ARM.tar.gz
+        cd $GITHUB_WORKSPACE
+
+    - name: Download PocketMine-MP
+      run: |
+        mkdir -p app/src/main/assets/pocketmine
+        cd app/src/main/assets/pocketmine
+        wget -q https://github.com/pmmp/PocketMine-MP/releases/download/5.21.0/PocketMine-MP.phar
+        wget -q https://github.com/pmmp/PocketMine-MP/raw/stable/start.sh
+        chmod +x start.sh
+        cd $GITHUB_WORKSPACE
+
+    - name: Verify Downloaded Files
+      run: |
+        echo "=== PHP ARM64 ==="
+        ls -lh app/src/main/assets/php/arm64-v8a/
+        echo "=== PHP ARMv7 ==="
+        ls -lh app/src/main/assets/php/armeabi-v7a/
+        echo "=== PocketMine-MP ==="
+        ls -lh app/src/main/assets/pocketmine/
       
     - name: Build with Gradle
       run: ./gradlew assembleDebug --stacktrace

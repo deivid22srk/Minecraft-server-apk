@@ -14,16 +14,14 @@
 .cxx
 local.properties
 
-*.apk
-*.ap_
-*.aab
+# PHP Binaries (downloaded during CI/CD)
+app/src/main/assets/php/arm64-v8a/*
+app/src/main/assets/php/armeabi-v7a/*
+!app/src/main/assets/php/arm64-v8a/.gitkeep
+!app/src/main/assets/php/armeabi-v7a/.gitkeep
+!app/src/main/assets/php/README.md
 
-*.class
-
-*.log
-
-.navigation/
-captures/
-output.json
-
-*.hprof
+# PocketMine-MP (downloaded during CI/CD)
+app/src/main/assets/pocketmine/*.phar
+app/src/main/assets/pocketmine/start.sh
+!app/src/main/assets/pocketmine/README.md
