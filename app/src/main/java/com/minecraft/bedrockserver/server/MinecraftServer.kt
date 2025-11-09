@@ -98,22 +98,29 @@ class MinecraftServer(private val context: Context) {
             
             phpBinary.setExecutable(true, false)
             
+            try {
+                Runtime.getRuntime().exec(arrayOf("chmod", "755", phpBinary.absolutePath)).waitFor()
+                Log.d(TAG, "chmod 755 applied to PHP binary")
+            } catch (e: Exception) {
+                Log.w(TAG, "chmod failed: ${e.message}")
+            }
+            
+            if (!phpBinary.canExecute()) {
+                addConsoleLog("⚠️ PHP binary não tem permissão de execução, tentando workaround...")
+            }
+            
             val libPath = File(serverDir, "bin/php7/lib").absolutePath
             
             val processBuilder = ProcessBuilder(
-                phpBinary.absolutePath,
-                pharFile.absolutePath,
-                "--no-wizard",
-                "--enable-ansi"
+                "sh", "-c",
+                "export LD_LIBRARY_PATH='$libPath' && " +
+                "export HOME='${serverDir.absolutePath}' && " +
+                "export TMPDIR='${context.cacheDir.absolutePath}' && " +
+                "cd '${serverDir.absolutePath}' && " +
+                "'${phpBinary.absolutePath}' '${pharFile.absolutePath}' --no-wizard --enable-ansi"
             )
             
             processBuilder.directory(serverDir)
-            processBuilder.environment().apply {
-                put("LD_LIBRARY_PATH", libPath)
-                put("HOME", serverDir.absolutePath)
-                put("TMPDIR", context.cacheDir.absolutePath)
-            }
-            
             processBuilder.redirectErrorStream(true)
             
             addConsoleLog("Executando: ${phpBinary.absolutePath} ${pharFile.absolutePath}")
