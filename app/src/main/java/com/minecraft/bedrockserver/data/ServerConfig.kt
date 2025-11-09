@@ -16,7 +16,9 @@ data class ServerConfig(
     val publicServer: Boolean = true,
     val aternosServerUrl: String = "",
     val enableWhitelist: Boolean = false,
-    val levelSeed: String = ""
+    val levelSeed: String = "",
+    val useTunnel: Boolean = true,
+    val tunnelService: String = "playit"
 ) {
     companion object {
         private const val CONFIG_FILE = "server_config.json"
@@ -52,6 +54,9 @@ data class ServerConfig(
             |show-coordinates=${if (showCoordinates) "true" else "false"}
             |pvp=${if (pvp) "true" else "false"}
             |level-seed=$levelSeed
+            |server-authoritative-movement=server-auth
+            |player-movement-score-threshold=20
+            |server-authoritative-block-breaking=true
         """.trimMargin()
     }
 }

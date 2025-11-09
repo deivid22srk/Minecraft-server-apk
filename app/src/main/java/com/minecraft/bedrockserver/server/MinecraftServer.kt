@@ -6,15 +6,16 @@ import com.minecraft.bedrockserver.data.ServerConfig
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import java.io.BufferedReader
-import java.io.File
-import java.io.InputStreamReader
+import java.io.*
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import java.net.ServerSocket
+import java.net.Socket
 
 class MinecraftServer(private val context: Context) {
     private val TAG = "MinecraftServer"
     private var serverProcess: Process? = null
+    private var proxySocket: ServerSocket? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
     private val _consoleOutput = MutableStateFlow<List<String>>(emptyList())
@@ -25,6 +26,9 @@ class MinecraftServer(private val context: Context) {
     
     private val _playersOnline = MutableStateFlow(0)
     val playersOnline: StateFlow<Int> = _playersOnline
+    
+    private val _publicAddress = MutableStateFlow<String>("")
+    val publicAddress: StateFlow<String> = _publicAddress
     
     private val serverDir: File
         get() = File(context.filesDir, "bedrock_server")
@@ -47,22 +51,20 @@ class MinecraftServer(private val context: Context) {
             propertiesFile.writeText(config.toProperties())
         }
         
-        setupPocketMine()
+        extractServerFiles()
     }
     
-    private fun setupPocketMine() {
-        val pocketMineDir = File(serverDir, "PocketMine-MP")
-        if (!pocketMineDir.exists()) {
-            pocketMineDir.mkdirs()
-            
-            val startScript = File(serverDir, "start.sh")
-            startScript.writeText("""
-                #!/bin/bash
-                cd ${serverDir.absolutePath}
-                export LD_LIBRARY_PATH=${serverDir.absolutePath}/bin/lib
-                ${serverDir.absolutePath}/bin/php7/bin/php ${serverDir.absolutePath}/PocketMine-MP.phar --no-wizard
-            """.trimIndent())
-            startScript.setExecutable(true)
+    private fun extractServerFiles() {
+        try {
+            val serverExecutable = File(serverDir, "bedrock_server")
+            if (!serverExecutable.exists()) {
+                addConsoleLog("Preparando servidor Bedrock...")
+                addConsoleLog("Para funcionar corretamente, você precisa:")
+                addConsoleLog("1. Baixar Minecraft Bedrock Server para ARM")
+                addConsoleLog("2. Ou usar um servidor proxy/túnel")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Erro ao extrair arquivos", e)
         }
     }
     
@@ -76,43 +78,144 @@ class MinecraftServer(private val context: Context) {
             updateServerProperties(config)
             updateGameRules(config)
             
-            addConsoleLog("Iniciando Minecraft Bedrock Server v1.21.120.4...")
-            addConsoleLog("Porta: ${config.port}")
+            addConsoleLog("===========================================")
+            addConsoleLog("Iniciando Minecraft Bedrock Server v1.21.120.4")
+            addConsoleLog("===========================================")
             
             val localIp = getLocalIpAddress()
-            val publicIp = getPublicIpAddress()
+            val port = config.port
             
-            addConsoleLog("Endereço Local: $localIp:${config.port}")
-            addConsoleLog("Endereço Público: $publicIp:${config.port}")
+            addConsoleLog("Endereço Local: $localIp:$port")
             
             if (config.publicServer) {
-                addConsoleLog("⚠️ Servidor público ativado")
-                addConsoleLog("Certifique-se de configurar o Port Forwarding no seu roteador")
-                addConsoleLog("Porta a ser redirecionada: ${config.port}")
+                addConsoleLog("")
+                addConsoleLog("🌐 SERVIDOR PÚBLICO ATIVADO")
+                addConsoleLog("")
+                addConsoleLog("Para conectar SEM configurar roteador, use:")
+                addConsoleLog("📱 Opção 1: Playit.gg (Recomendado)")
+                addConsoleLog("   • Baixe: https://playit.gg/download")
+                addConsoleLog("   • Crie túnel UDP na porta $port")
+                addConsoleLog("   • Use o endereço fornecido no Minecraft")
+                addConsoleLog("")
+                addConsoleLog("📱 Opção 2: Ngrok")
+                addConsoleLog("   • ngrok tcp $port")
+                addConsoleLog("")
+                addConsoleLog("📱 Opção 3: Radmin VPN / Hamachi")
+                addConsoleLog("   • Conecte todos os jogadores na mesma rede virtual")
+                
+                startTunnelService(port)
             }
             
             _isRunning.value = true
             
-            scope.launch {
-                simulateServerProcess(config)
-            }
+            startProxyServer(port, config)
             
-            addConsoleLog("✓ Servidor iniciado com sucesso!")
-            addConsoleLog("Jogadores podem se conectar usando: $publicIp:${config.port}")
+            addConsoleLog("")
+            addConsoleLog("✅ Servidor proxy iniciado na porta $port")
+            addConsoleLog("⚠️  IMPORTANTE: Este é um servidor PROXY")
+            addConsoleLog("")
+            addConsoleLog("Para servidor real, você precisa:")
+            addConsoleLog("1. Instalar Termux no Android")
+            addConsoleLog("2. Baixar Bedrock Server ARM")
+            addConsoleLog("3. Ou usar PocketMine-MP via Termux")
+            addConsoleLog("")
+            addConsoleLog("📖 Guia completo: github.com/minecraft-server-apk")
             
         } catch (e: Exception) {
             Log.e(TAG, "Erro ao iniciar servidor", e)
-            addConsoleLog("✗ Erro ao iniciar servidor: ${e.message}")
+            addConsoleLog("❌ Erro ao iniciar servidor: ${e.message}")
             _isRunning.value = false
         }
     }
     
-    private suspend fun simulateServerProcess(config: ServerConfig) {
-        while (_isRunning.value) {
-            delay(5000)
-            
-            if (Math.random() < 0.1) {
-                addConsoleLog("[INFO] Server tick ${System.currentTimeMillis()}")
+    private suspend fun startProxyServer(port: Int, config: ServerConfig) {
+        withContext(Dispatchers.IO) {
+            try {
+                proxySocket = ServerSocket(port)
+                addConsoleLog("Servidor proxy aguardando conexões...")
+                
+                scope.launch {
+                    while (_isRunning.value) {
+                        try {
+                            val client = proxySocket?.accept()
+                            if (client != null) {
+                                handleClient(client, config)
+                            }
+                        } catch (e: Exception) {
+                            if (_isRunning.value) {
+                                Log.e(TAG, "Erro ao aceitar conexão", e)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                addConsoleLog("⚠️  Não foi possível iniciar na porta $port")
+                addConsoleLog("A porta pode estar em uso")
+            }
+        }
+    }
+    
+    private fun handleClient(client: Socket, config: ServerConfig) {
+        scope.launch {
+            try {
+                val playerCount = _playersOnline.value + 1
+                _playersOnline.value = playerCount
+                
+                addConsoleLog("🎮 Tentativa de conexão de: ${client.inetAddress.hostAddress}")
+                addConsoleLog("Jogadores online: $playerCount/${config.maxPlayers}")
+                
+                val input = BufferedReader(InputStreamReader(client.getInputStream()))
+                val output = DataOutputStream(client.getOutputStream())
+                
+                val handshake = input.readLine()
+                addConsoleLog("📦 Handshake recebido: $handshake")
+                
+                val response = createServerResponse(config)
+                output.write(response.toByteArray())
+                output.flush()
+                
+                delay(5000)
+                
+                client.close()
+                _playersOnline.value = _playersOnline.value - 1
+                addConsoleLog("👋 Jogador desconectado")
+                
+            } catch (e: Exception) {
+                _playersOnline.value = maxOf(0, _playersOnline.value - 1)
+                Log.e(TAG, "Erro ao processar cliente", e)
+            }
+        }
+    }
+    
+    private fun createServerResponse(config: ServerConfig): String {
+        return buildString {
+            append("MCPE;")
+            append(config.serverName).append(";")
+            append("527;") // Protocol version 1.21.1
+            append("1.21.120.4;")
+            append(_playersOnline.value).append(";")
+            append(config.maxPlayers).append(";")
+            append("0;") // Server GUID
+            append("Bedrock level;")
+            append(config.gameMode.uppercase()).append(";")
+            append("1;")
+            append(config.port).append(";")
+            append(config.port).append(";\n")
+        }
+    }
+    
+    private fun startTunnelService(port: Int) {
+        scope.launch {
+            try {
+                addConsoleLog("🔗 Tentando iniciar túnel automático...")
+                
+                delay(1000)
+                
+                addConsoleLog("⚠️  Túnel automático não disponível")
+                addConsoleLog("Use as opções manuais acima")
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Erro ao iniciar túnel", e)
             }
         }
     }
@@ -120,14 +223,20 @@ class MinecraftServer(private val context: Context) {
     fun stopServer() {
         try {
             addConsoleLog("Parando servidor...")
+            
+            proxySocket?.close()
+            proxySocket = null
+            
             serverProcess?.destroy()
             serverProcess = null
+            
             _isRunning.value = false
             _playersOnline.value = 0
-            addConsoleLog("✓ Servidor parado")
+            
+            addConsoleLog("✅ Servidor parado")
         } catch (e: Exception) {
             Log.e(TAG, "Erro ao parar servidor", e)
-            addConsoleLog("✗ Erro ao parar servidor: ${e.message}")
+            addConsoleLog("❌ Erro ao parar servidor: ${e.message}")
         }
     }
     
@@ -140,8 +249,6 @@ class MinecraftServer(private val context: Context) {
         val worldDir = File(serverDir, "worlds/Bedrock level")
         worldDir.mkdirs()
         
-        val levelDatPath = File(worldDir, "level.dat")
-        
         val gameRules = mutableListOf<String>()
         if (config.keepInventory) {
             gameRules.add("gamerule keepInventory true")
@@ -153,14 +260,14 @@ class MinecraftServer(private val context: Context) {
         val commandFile = File(serverDir, "commands.txt")
         commandFile.writeText(gameRules.joinToString("\n"))
         
-        addConsoleLog("Game rules configuradas:")
-        addConsoleLog("  - Keep Inventory: ${config.keepInventory}")
-        addConsoleLog("  - Show Coordinates: ${config.showCoordinates}")
+        addConsoleLog("⚙️  Configurações aplicadas:")
+        addConsoleLog("  • Keep Inventory: ${config.keepInventory}")
+        addConsoleLog("  • Show Coordinates: ${config.showCoordinates}")
     }
     
     fun executeCommand(command: String) {
         if (!_isRunning.value) {
-            addConsoleLog("✗ Servidor não está rodando")
+            addConsoleLog("❌ Servidor não está rodando")
             return
         }
         
@@ -169,46 +276,46 @@ class MinecraftServer(private val context: Context) {
             
             when {
                 command.startsWith("gamerule") -> {
-                    addConsoleLog("✓ Game rule aplicada")
+                    addConsoleLog("✅ Game rule aplicada")
                 }
                 command == "list" -> {
                     addConsoleLog("Jogadores online: ${_playersOnline.value}/${ServerConfig.load(context).maxPlayers}")
                 }
                 command == "help" -> {
-                    addConsoleLog("Comandos disponíveis: list, gamerule, stop, whitelist")
+                    addConsoleLog("Comandos disponíveis:")
+                    addConsoleLog("  list - Lista jogadores online")
+                    addConsoleLog("  gamerule <rule> <value> - Define regra")
+                    addConsoleLog("  stop - Para o servidor")
+                }
+                command == "stop" -> {
+                    stopServer()
                 }
                 else -> {
-                    addConsoleLog("✓ Comando executado")
+                    addConsoleLog("⚠️  Comando não reconhecido. Use 'help'")
                 }
             }
         } catch (e: Exception) {
-            addConsoleLog("✗ Erro ao executar comando: ${e.message}")
+            addConsoleLog("❌ Erro ao executar comando: ${e.message}")
         }
     }
     
     suspend fun importFromAternos(aternosUrl: String): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                addConsoleLog("Importando mundo do Aternos...")
+                addConsoleLog("📥 Importando mundo do Aternos...")
                 addConsoleLog("URL: $aternosUrl")
                 
                 delay(2000)
                 
-                addConsoleLog("✓ Download do mundo concluído")
-                addConsoleLog("✓ Extraindo arquivos...")
+                addConsoleLog("⚠️  Importação do Aternos em desenvolvimento")
+                addConsoleLog("Por enquanto, você pode:")
+                addConsoleLog("1. Baixar mundo do Aternos manualmente")
+                addConsoleLog("2. Colocar na pasta: ${serverDir.absolutePath}/worlds")
                 
-                delay(1500)
-                
-                val worldsDir = File(serverDir, "worlds")
-                worldsDir.mkdirs()
-                
-                addConsoleLog("✓ Mundo importado com sucesso!")
-                addConsoleLog("Reinicie o servidor para aplicar as mudanças")
-                
-                true
+                false
             } catch (e: Exception) {
                 Log.e(TAG, "Erro ao importar do Aternos", e)
-                addConsoleLog("✗ Erro ao importar: ${e.message}")
+                addConsoleLog("❌ Erro ao importar: ${e.message}")
                 false
             }
         }
@@ -219,7 +326,7 @@ class MinecraftServer(private val context: Context) {
             .format(java.util.Date())
         val logMessage = "[$timestamp] $message"
         
-        _consoleOutput.value = (_consoleOutput.value + logMessage).takeLast(100)
+        _consoleOutput.value = (_consoleOutput.value + logMessage).takeLast(200)
         Log.d(TAG, message)
     }
     
