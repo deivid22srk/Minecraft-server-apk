@@ -36,11 +36,13 @@ class MinecraftServer(private val context: Context) {
     init {
         scope.launch {
             try {
+                addConsoleLog("Verificando binários do servidor...")
                 serverDir = AssetExtractor.extractIfNeeded(context)
                 addConsoleLog("✓ Binários extraídos com sucesso")
             } catch (e: Exception) {
                 Log.e(TAG, "Erro ao extrair assets", e)
                 addConsoleLog("✗ Erro ao extrair binários: ${e.message}")
+                addConsoleLog("✗ Detalhes: ${e.stackTraceToString()}")
             }
         }
     }
@@ -84,6 +86,8 @@ class MinecraftServer(private val context: Context) {
     private suspend fun startPocketMineServer() = withContext(Dispatchers.IO) {
         try {
             if (!::serverDir.isInitialized) {
+                addConsoleLog("Preparando servidor pela primeira vez...")
+                addConsoleLog("Isso pode levar alguns minutos para baixar os arquivos necessários")
                 serverDir = AssetExtractor.extractIfNeeded(context)
             }
             
