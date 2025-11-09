@@ -52,7 +52,7 @@ jobs:
         echo "=== PocketMine-MP ==="
         ls -lh app/src/main/assets/pocketmine/
       
-    - name: Build with Gradle
+    - name: Build Debug APK
       run: ./gradlew assembleDebug --stacktrace
 
     - name: Upload Debug APK
@@ -60,14 +60,3 @@ jobs:
       with:
         name: Minecraft-Server-Debug
         path: ./app/build/outputs/apk/debug/app-debug.apk
-        
-    - name: Build Release APK
-      run: ./gradlew assembleRelease --stacktrace
-      continue-on-error: true
-      
-    - name: Upload Release APK
-      uses: actions/upload-artifact@v4
-      if: success()
-      with:
-        name: Minecraft-Server-Release
-        path: ./app/build/outputs/apk/release/app-release-unsigned.apk
