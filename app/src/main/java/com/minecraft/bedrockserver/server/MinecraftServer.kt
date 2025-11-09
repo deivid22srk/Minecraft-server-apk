@@ -269,7 +269,6 @@ class MinecraftServer(private val context: Context) {
             serverProcess = null
             commandWriter = null
             outputReaderJob = null
-            errorReaderJob = null
             
             _isRunning.value = false
             _playersOnline.value = 0
