@@ -22,7 +22,65 @@ No contexto do app, isso pode ocorrer por:
 
 ## ✅ Soluções Implementadas
 
-### 1. Correções no MinecraftServer.kt (NOVA ATUALIZAÇÃO)
+### 🆕 SOLUÇÃO FINAL - Separação de Binários e Dados (v1.5)
+
+#### Problema: error=13, Permission denied
+Após corrigir o exit code 126, surgiu um novo erro:
+```
+error=13, Permission denied
+Cannot run program "/data/user/0/.../files/bedrock_server/bin/php7/bin/php"
+```
+
+**Causa:** No Android 10+ (API 29+), o diretório `filesDir` é montado com a flag `noexec`, impedindo a execução de qualquer binário. Isso é uma medida de segurança do Android para prevenir execução de código malicioso.
+
+**Solução:** Separar binários executáveis dos dados:
+- **Binários PHP** → `context.codeCacheDir/bedrock_bin/` (permite execução)
+- **Dados/Mundos** → `context.filesDir/bedrock_server/` (armazenamento persistente)
+
+#### Mudanças Implementadas:
+
+**AssetExtractor.kt (v1.5):**
+```kotlin
+fun extractIfNeeded(context: Context): File {
+    // Binários em codeCacheDir (executável)
+    val binDir = File(context.codeCacheDir, "bedrock_bin")
+    // Dados em filesDir (persistente)
+    val dataDir = File(context.filesDir, "bedrock_server")
+    
+    extract(context, binDir, dataDir)
+    return dataDir
+}
+
+private fun extract(context: Context, binDir: File, dataDir: File) {
+    // PHP binaries → binDir
+    extractAssetFolder(context, "php/$abi", binDir)
+    
+    // PocketMine e dados → dataDir
+    extractAssetFolder(context, "pocketmine", dataDir)
+    
+    // Criar referência para acesso fácil
+    val phpLink = File(dataDir, "php_binary")
+    phpLink.writeText(phpBinary.absolutePath)
+}
+```
+
+**MinecraftServer.kt:**
+```kotlin
+// Buscar binários do codeCacheDir
+val binDir = File(context.codeCacheDir, "bedrock_bin")
+val phpBinary = File(binDir, "bin/php7/bin/php")
+
+// Dados continuam em filesDir
+val pharFile = File(serverDir, "pocketmine/PocketMine-MP.phar")
+```
+
+**Benefícios:**
+- ✅ Binários PHP executam corretamente (sem erro de permissão)
+- ✅ Dados do servidor persistem mesmo após limpeza de cache
+- ✅ Mundos, plugins e configurações ficam seguros em `filesDir`
+- ✅ Compatível com Android 10, 11, 12, 13, 14+
+
+### 1. Correções no MinecraftServer.kt
 
 #### 1.1. Teste de Compatibilidade do Binário PHP
 Antes de tentar iniciar o servidor, agora testamos se o binário PHP é compatível:

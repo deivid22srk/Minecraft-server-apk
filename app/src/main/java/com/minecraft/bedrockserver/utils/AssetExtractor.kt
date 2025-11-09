@@ -10,7 +10,7 @@ import java.util.zip.ZipInputStream
 
 object AssetExtractor {
     private const val TAG = "AssetExtractor"
-    private const val EXTRACTION_VERSION = "1.4"
+    private const val EXTRACTION_VERSION = "1.5"
     private const val PREFS_NAME = "asset_extractor"
     private const val KEY_VERSION = "extracted_version"
     
@@ -18,35 +18,42 @@ object AssetExtractor {
     private const val POCKETMINE_PHAR_URL = "https://github.com/pmmp/PocketMine-MP/releases/download/5.11.2/PocketMine-MP.phar"
     
     fun extractIfNeeded(context: Context): File {
-        val baseDir = File(context.filesDir, "bedrock_server")
+        // Usar codeCacheDir para binários executáveis (Android permite execução aqui)
+        // filesDir tem mount flag 'noexec' no Android 10+
+        val binDir = File(context.codeCacheDir, "bedrock_bin")
+        val dataDir = File(context.filesDir, "bedrock_server")
+        
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val extractedVersion = prefs.getString(KEY_VERSION, "")
         
-        if (extractedVersion != EXTRACTION_VERSION || !baseDir.exists()) {
+        if (extractedVersion != EXTRACTION_VERSION || !binDir.exists() || !dataDir.exists()) {
             Log.i(TAG, "Extracting assets (version $EXTRACTION_VERSION)...")
-            extract(context, baseDir)
+            Log.i(TAG, "Binaries will be stored in: ${binDir.absolutePath}")
+            Log.i(TAG, "Data will be stored in: ${dataDir.absolutePath}")
+            extract(context, binDir, dataDir)
             prefs.edit().putString(KEY_VERSION, EXTRACTION_VERSION).apply()
             Log.i(TAG, "Assets extracted successfully")
         } else {
             Log.i(TAG, "Assets already extracted (version $extractedVersion)")
         }
         
-        return baseDir
+        return dataDir
     }
     
-    private fun extract(context: Context, baseDir: File) {
-        baseDir.mkdirs()
+    private fun extract(context: Context, binDir: File, dataDir: File) {
+        binDir.mkdirs()
+        dataDir.mkdirs()
         
         val abi = getSupportedAbi()
         Log.i(TAG, "Detected ABI: $abi")
         
-        extractAssetFolder(context, "php/$abi", baseDir)
+        extractAssetFolder(context, "php/$abi", binDir)
         
-        val phpBinary = File(baseDir, "bin/php7/bin/php")
+        val phpBinary = File(binDir, "bin/php7/bin/php")
         if (!phpBinary.exists()) {
             Log.i(TAG, "PHP binary not found, downloading...")
             try {
-                downloadAndExtractPhpBinary(baseDir)
+                downloadAndExtractPhpBinary(binDir)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to download PHP binary", e)
                 throw RuntimeException("Falha ao baixar binário PHP: ${e.message}", e)
@@ -61,17 +68,17 @@ object AssetExtractor {
             throw RuntimeException("Binário PHP não encontrado após extração")
         }
         
-        val binDir = File(baseDir, "bin/php7/bin")
-        if (binDir.exists()) {
-            binDir.listFiles()?.forEach { file ->
+        val phpBinDir = File(binDir, "bin/php7/bin")
+        if (phpBinDir.exists()) {
+            phpBinDir.listFiles()?.forEach { file ->
                 if (file.isFile) {
                     setExecutablePermissions(file)
                 }
             }
-            Log.i(TAG, "PHP binaries made executable in: ${binDir.absolutePath}")
+            Log.i(TAG, "PHP binaries made executable in: ${phpBinDir.absolutePath}")
         }
         
-        val libPath = File(baseDir, "bin/php7/lib")
+        val libPath = File(binDir, "bin/php7/lib")
         if (libPath.exists()) {
             var soCount = 0
             libPath.walk().filter { it.extension == "so" }.forEach { 
@@ -85,7 +92,17 @@ object AssetExtractor {
             Log.e(TAG, "Library path not found: ${libPath.absolutePath}")
         }
         
-        val pocketMineDir = File(baseDir, "pocketmine")
+        // Criar symlink do binário para dataDir para acesso fácil
+        val phpLink = File(dataDir, "php_binary")
+        try {
+            if (phpLink.exists()) phpLink.delete()
+            phpLink.writeText(phpBinary.absolutePath)
+            Log.i(TAG, "PHP binary path saved at: ${phpLink.absolutePath}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not create PHP binary reference: ${e.message}")
+        }
+        
+        val pocketMineDir = File(dataDir, "pocketmine")
         pocketMineDir.mkdirs()
         extractAssetFolder(context, "pocketmine", pocketMineDir)
         
@@ -100,15 +117,15 @@ object AssetExtractor {
             }
         }
         
-        File(baseDir, "worlds").mkdirs()
-        File(baseDir, "plugins").mkdirs()
-        File(baseDir, "players").mkdirs()
-        File(baseDir, "resource_packs").mkdirs()
-        File(baseDir, "behavior_packs").mkdirs()
+        File(dataDir, "worlds").mkdirs()
+        File(dataDir, "plugins").mkdirs()
+        File(dataDir, "players").mkdirs()
+        File(dataDir, "resource_packs").mkdirs()
+        File(dataDir, "behavior_packs").mkdirs()
         
-        createServerProperties(baseDir)
-        createPocketMineYml(baseDir)
-        createServerYml(baseDir)
+        createServerProperties(dataDir)
+        createPocketMineYml(dataDir)
+        createServerYml(dataDir)
     }
     
     private fun createServerYml(baseDir: File) {

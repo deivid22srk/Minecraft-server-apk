@@ -91,11 +91,18 @@ class MinecraftServer(private val context: Context) {
                 serverDir = AssetExtractor.extractIfNeeded(context)
             }
             
-            val phpBinary = File(serverDir, "bin/php7/bin/php")
+            // Binários PHP estão em codeCacheDir (permite execução)
+            // Dados/mundos estão em filesDir (armazenamento persistente)
+            val binDir = File(context.codeCacheDir, "bedrock_bin")
+            val phpBinary = File(binDir, "bin/php7/bin/php")
             val pharFile = File(serverDir, "pocketmine/PocketMine-MP.phar")
+            
+            addConsoleLog("📦 Diretório de binários: ${binDir.absolutePath}")
+            addConsoleLog("💾 Diretório de dados: ${serverDir.absolutePath}")
             
             if (!phpBinary.exists()) {
                 addConsoleLog("✗ Binário PHP não encontrado: ${phpBinary.absolutePath}")
+                addConsoleLog("✗ Execute a extração de assets novamente")
                 return@withContext
             }
             
@@ -118,7 +125,7 @@ class MinecraftServer(private val context: Context) {
                 addConsoleLog("⚠️ PHP binary não tem permissão de execução, tentando workaround...")
             }
             
-            val libPath = File(serverDir, "bin/php7/lib")
+            val libPath = File(binDir, "bin/php7/lib")
             if (!libPath.exists()) {
                 addConsoleLog("✗ Bibliotecas PHP não encontradas: ${libPath.absolutePath}")
                 return@withContext
@@ -158,7 +165,7 @@ class MinecraftServer(private val context: Context) {
                 Log.w(TAG, "PHP test failed", e)
             }
             
-            val phpIni = File(serverDir, "bin/php7/bin/php.ini")
+            val phpIni = File(binDir, "bin/php7/bin/php.ini")
             
             // Construir comando de forma mais robusta
             val commandList = mutableListOf(
