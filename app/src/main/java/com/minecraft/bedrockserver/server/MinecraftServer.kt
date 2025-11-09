@@ -186,7 +186,7 @@ class MinecraftServer(private val context: Context) {
                     val reader = BufferedReader(InputStreamReader(serverProcess!!.inputStream))
                     var line: String?
                     
-                    addConsoleLog("✓ Processo PHP iniciado (PID: ${serverProcess?.pid() ?: "unknown"})")
+                    addConsoleLog("✓ Processo PHP iniciado")
                     addConsoleLog("✓ Aguardando output do PocketMine-MP...")
                     
                     while (reader.readLine().also { line = it } != null && _isRunning.value) {
