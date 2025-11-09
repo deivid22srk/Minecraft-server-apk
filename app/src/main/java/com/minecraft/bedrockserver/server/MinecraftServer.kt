@@ -18,6 +18,7 @@ class MinecraftServer(private val context: Context) {
     private val TAG = "MinecraftServer"
     private var serverProcess: Process? = null
     private var outputReaderJob: Job? = null
+    private var errorReaderJob: Job? = null
     private var commandWriter: OutputStreamWriter? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
@@ -50,30 +51,33 @@ class MinecraftServer(private val context: Context) {
             return
         }
         
-        try {
-            updateServerProperties(config)
-            
-            addConsoleLog("Iniciando Minecraft Bedrock Server v1.21.120.4...")
-            addConsoleLog("Porta: ${config.port}")
-            
-            val localIp = getLocalIpAddress()
-            val publicIp = getPublicIpAddress()
-            
-            addConsoleLog("Endereço Local: $localIp:${config.port}")
-            addConsoleLog("Endereço Público: $publicIp:${config.port}")
-            
-            if (config.publicServer) {
-                addConsoleLog("⚠️ Servidor público ativado")
-                addConsoleLog("Certifique-se de configurar o Port Forwarding no seu roteador")
-                addConsoleLog("Porta a ser redirecionada: ${config.port}")
+        withContext(Dispatchers.IO) {
+            try {
+                updateServerProperties(config)
+                
+                addConsoleLog("Iniciando Minecraft Bedrock Server v1.21.120.4...")
+                addConsoleLog("Porta: ${config.port}")
+                
+                val localIp = getLocalIpAddress()
+                val publicIp = getPublicIpAddress()
+                
+                addConsoleLog("Endereço Local: $localIp:${config.port}")
+                addConsoleLog("Endereço Público: $publicIp:${config.port}")
+                
+                if (config.publicServer) {
+                    addConsoleLog("⚠️ Servidor público ativado")
+                    addConsoleLog("Certifique-se de configurar o Port Forwarding no seu roteador")
+                    addConsoleLog("Porta a ser redirecionada: ${config.port}")
+                }
+                
+                startPocketMineServer()
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Erro ao iniciar servidor", e)
+                addConsoleLog("✗ Erro ao iniciar servidor: ${e.message}")
+                addConsoleLog("✗ Stack trace: ${e.stackTraceToString()}")
+                _isRunning.value = false
             }
-            
-            startPocketMineServer()
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Erro ao iniciar servidor", e)
-            addConsoleLog("✗ Erro ao iniciar servidor: ${e.message}")
-            _isRunning.value = false
         }
     }
     
@@ -109,32 +113,81 @@ class MinecraftServer(private val context: Context) {
                 addConsoleLog("⚠️ PHP binary não tem permissão de execução, tentando workaround...")
             }
             
-            val libPath = File(serverDir, "bin/php7/lib").absolutePath
+            val libPath = File(serverDir, "bin/php7/lib")
+            if (!libPath.exists()) {
+                addConsoleLog("✗ Bibliotecas PHP não encontradas: ${libPath.absolutePath}")
+                return@withContext
+            }
+            
+            val phpIni = File(serverDir, "bin/php7/bin/php.ini")
+            val phpIniArg = if (phpIni.exists()) "-c ${phpIni.absolutePath}" else ""
             
             val processBuilder = ProcessBuilder(
                 "sh", "-c",
-                "export LD_LIBRARY_PATH='$libPath' && " +
+                "export LD_LIBRARY_PATH='${libPath.absolutePath}' && " +
                 "export HOME='${serverDir.absolutePath}' && " +
                 "export TMPDIR='${context.cacheDir.absolutePath}' && " +
                 "cd '${serverDir.absolutePath}' && " +
-                "'${phpBinary.absolutePath}' '${pharFile.absolutePath}' --no-wizard --enable-ansi"
+                "'${phpBinary.absolutePath}' $phpIniArg '${pharFile.absolutePath}' " +
+                "--data='${serverDir.absolutePath}' " +
+                "--plugins='${serverDir.absolutePath}/plugins' " +
+                "--no-wizard " +
+                "--enable-ansi 2>&1"
             )
             
             processBuilder.directory(serverDir)
-            processBuilder.redirectErrorStream(true)
             
-            addConsoleLog("Executando: ${phpBinary.absolutePath} ${pharFile.absolutePath}")
+            addConsoleLog("Comando: sh -c \"...\"")
+            addConsoleLog("Executando: ${phpBinary.absolutePath}")
+            addConsoleLog("PHAR: ${pharFile.absolutePath}")
             addConsoleLog("Diretório: ${serverDir.absolutePath}")
+            addConsoleLog("LD_LIBRARY_PATH: ${libPath.absolutePath}")
             
             serverProcess = processBuilder.start()
-            commandWriter = OutputStreamWriter(serverProcess!!.outputStream)
             
+            delay(1000)
+            
+            if (serverProcess?.isAlive != true) {
+                addConsoleLog("✗ Processo PHP morreu imediatamente após start()")
+                try {
+                    val exitCode = serverProcess?.exitValue() ?: -1
+                    addConsoleLog("✗ Exit code: $exitCode")
+                    
+                    val errorStream = serverProcess?.errorStream
+                    if (errorStream != null) {
+                        val errorReader = BufferedReader(InputStreamReader(errorStream))
+                        val errors = errorReader.readLines()
+                        errors.forEach { addConsoleLog("ERROR: $it") }
+                    }
+                } catch (e: Exception) {
+                    addConsoleLog("✗ Não foi possível ler erro: ${e.message}")
+                }
+                _isRunning.value = false
+                return@withContext
+            }
+            
+            commandWriter = OutputStreamWriter(serverProcess!!.outputStream)
             _isRunning.value = true
+            
+            errorReaderJob = scope.launch {
+                try {
+                    val errorReader = BufferedReader(InputStreamReader(serverProcess!!.errorStream))
+                    var line: String?
+                    while (errorReader.readLine().also { line = it } != null && _isRunning.value) {
+                        line?.let { addConsoleLog("[ERROR] $it") }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Erro ao ler stderr", e)
+                }
+            }
             
             outputReaderJob = scope.launch {
                 try {
                     val reader = BufferedReader(InputStreamReader(serverProcess!!.inputStream))
                     var line: String?
+                    
+                    addConsoleLog("✓ Processo PHP iniciado (PID: ${serverProcess?.pid() ?: "unknown"})")
+                    addConsoleLog("✓ Aguardando output do PocketMine-MP...")
                     
                     while (reader.readLine().also { line = it } != null && _isRunning.value) {
                         line?.let { 
@@ -150,7 +203,8 @@ class MinecraftServer(private val context: Context) {
                 } finally {
                     withContext(Dispatchers.Main) {
                         if (_isRunning.value) {
-                            addConsoleLog("✗ Servidor parou inesperadamente")
+                            val exitCode = serverProcess?.exitValue() ?: -1
+                            addConsoleLog("✗ Servidor parou inesperadamente (exit code: $exitCode)")
                             stopServer()
                         }
                     }
@@ -207,6 +261,7 @@ class MinecraftServer(private val context: Context) {
             serverProcess?.destroy()
             
             outputReaderJob?.cancel()
+            errorReaderJob?.cancel()
             commandWriter?.close()
             
             serverProcess?.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
@@ -218,6 +273,7 @@ class MinecraftServer(private val context: Context) {
             serverProcess = null
             commandWriter = null
             outputReaderJob = null
+            errorReaderJob = null
             
             _isRunning.value = false
             _playersOnline.value = 0

@@ -8,7 +8,7 @@ import java.io.FileOutputStream
 
 object AssetExtractor {
     private const val TAG = "AssetExtractor"
-    private const val EXTRACTION_VERSION = "1.2"
+    private const val EXTRACTION_VERSION = "1.3"
     private const val PREFS_NAME = "asset_extractor"
     private const val KEY_VERSION = "extracted_version"
     
@@ -70,9 +70,24 @@ object AssetExtractor {
         File(baseDir, "worlds").mkdirs()
         File(baseDir, "plugins").mkdirs()
         File(baseDir, "players").mkdirs()
+        File(baseDir, "resource_packs").mkdirs()
+        File(baseDir, "behavior_packs").mkdirs()
         
         createServerProperties(baseDir)
         createPocketMineYml(baseDir)
+        createServerYml(baseDir)
+    }
+    
+    private fun createServerYml(baseDir: File) {
+        val serverYml = File(baseDir, "server.yml")
+        if (!serverYml.exists()) {
+            serverYml.writeText("""
+                aliases:
+                
+                auto-report:
+                  enabled: false
+            """.trimIndent())
+        }
     }
     
     private fun extractAssetFolder(context: Context, assetPath: String, destDir: File) {
