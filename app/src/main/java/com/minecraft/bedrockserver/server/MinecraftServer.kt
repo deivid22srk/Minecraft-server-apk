@@ -153,7 +153,15 @@ class MinecraftServer(private val context: Context) {
                 addConsoleLog("🚀 Iniciando PocketMine-MP...")
                 addConsoleLog("")
                 
-                val phpPath = phpManager.phpBinary.absolutePath
+                val phpPath = phpManager.getPhpPath()
+                addConsoleLog("PHP: $phpPath")
+                
+                val phpVersion = phpManager.getPhpVersion()
+                if (phpVersion != null) {
+                    addConsoleLog("Versão: $phpVersion")
+                }
+                addConsoleLog("")
+                
                 val pharPath = pocketMineFile.absolutePath
                 
                 val startScript = File(serverDir, "start.sh")
