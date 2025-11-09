@@ -10,7 +10,7 @@ import java.util.zip.ZipInputStream
 
 object AssetExtractor {
     private const val TAG = "AssetExtractor"
-    private const val EXTRACTION_VERSION = "1.6"
+    private const val EXTRACTION_VERSION = "1.7"
     private const val PREFS_NAME = "asset_extractor"
     private const val KEY_VERSION = "extracted_version"
     
@@ -50,40 +50,15 @@ object AssetExtractor {
         extractAssetFolder(context, "php/$abi", binDir)
         
         val phpBinary = File(binDir, "bin/php7/bin/php")
-        val libPath = File(binDir, "bin/php7/lib")
         
-        // Verificar se binário E bibliotecas existem
-        val hasSoLibraries = libPath.exists() && 
-                             libPath.walk().any { it.extension == "so" }
-        
-        if (!phpBinary.exists() || !hasSoLibraries) {
-            if (!phpBinary.exists()) {
-                Log.i(TAG, "PHP binary not found, downloading...")
-            } else {
-                Log.i(TAG, "PHP libraries (.so) not found, downloading complete package...")
-            }
-            
-            try {
-                // Limpar diretório antes de baixar
-                if (binDir.exists()) {
-                    Log.i(TAG, "Cleaning existing bin directory...")
-                    binDir.deleteRecursively()
-                    binDir.mkdirs()
-                }
-                downloadAndExtractPhpBinary(binDir)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to download PHP binary", e)
-                throw RuntimeException("Falha ao baixar binário PHP: ${e.message}", e)
-            }
+        if (!phpBinary.exists()) {
+            Log.e(TAG, "PHP binary not found after extraction: ${phpBinary.absolutePath}")
+            Log.e(TAG, "Assets may not be included in the APK properly")
+            throw RuntimeException("Binário PHP não encontrado após extração dos assets. Por favor, reinstale o aplicativo.")
         }
         
-        if (phpBinary.exists()) {
-            setExecutablePermissions(phpBinary)
-            Log.i(TAG, "PHP binary found and set executable: ${phpBinary.absolutePath}")
-        } else {
-            Log.e(TAG, "PHP binary not found at: ${phpBinary.absolutePath}")
-            throw RuntimeException("Binário PHP não encontrado após extração")
-        }
+        setExecutablePermissions(phpBinary)
+        Log.i(TAG, "PHP binary found and set executable: ${phpBinary.absolutePath}")
         
         val phpBinDir = File(binDir, "bin/php7/bin")
         if (phpBinDir.exists()) {
@@ -95,7 +70,7 @@ object AssetExtractor {
             Log.i(TAG, "PHP binaries made executable in: ${phpBinDir.absolutePath}")
         }
         
-        // libPath já foi declarado acima
+        val libPath = File(binDir, "bin/php7/lib")
         if (libPath.exists()) {
             var soCount = 0
             libPath.walk().filter { it.extension == "so" }.forEach { 
@@ -132,13 +107,8 @@ object AssetExtractor {
         
         val pharFile = File(pocketMineDir, "PocketMine-MP.phar")
         if (!pharFile.exists()) {
-            Log.i(TAG, "PocketMine-MP.phar not found, downloading...")
-            try {
-                downloadPocketMinePhar(pharFile)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to download PocketMine-MP.phar", e)
-                throw RuntimeException("Falha ao baixar PocketMine-MP.phar: ${e.message}", e)
-            }
+            Log.e(TAG, "PocketMine-MP.phar not found after extraction: ${pharFile.absolutePath}")
+            throw RuntimeException("PocketMine-MP.phar não encontrado após extração dos assets")
         }
         
         File(dataDir, "worlds").mkdirs()
@@ -169,8 +139,12 @@ object AssetExtractor {
             val files = context.assets.list(assetPath) ?: return
             
             if (files.isEmpty()) {
-                copyAssetFile(context, assetPath, File(destDir.parentFile, File(assetPath).name))
+                // É um arquivo, não um diretório
+                // destDir já é o caminho completo do arquivo de destino
+                copyAssetFile(context, assetPath, destDir)
             } else {
+                // É um diretório, processar recursivamente
+                destDir.mkdirs()
                 for (file in files) {
                     if (file == "README.md" || file == ".gitkeep") continue
                     extractAssetFolder(context, "$assetPath/$file", File(destDir, file))

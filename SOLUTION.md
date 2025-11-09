@@ -22,7 +22,73 @@ No contexto do app, isso pode ocorrer por:
 
 ## ✅ Soluções Implementadas
 
-### 🆕 SOLUÇÃO FINAL - Separação de Binários e Dados + Download Forçado (v1.6)
+### 🆕 SOLUÇÃO FINAL - Correção da Extração de Assets (v1.7)
+
+#### Problema: Assets incluídos mas não extraídos corretamente
+
+O GitHub Actions já inclui o PHP e PocketMine nos assets do APK:
+```yaml
+- name: Download PHP Binary for Android (ARM64)
+  run: |
+    mkdir -p app/src/main/assets/php/arm64-v8a
+    cd app/src/main/assets/php/arm64-v8a
+    wget -q https://github.com/pmmp/PHP-Binaries/releases/latest/download/PHP-8.4-Android-arm64-PM5.tar.gz
+    tar -xzf PHP-8.4-Android-arm64-PM5.tar.gz
+```
+
+Mas o log mostrava:
+```
+14:52:14.928 I/AssetExtractor: Configured 0 .so libraries
+```
+
+**Causa:** A função `extractAssetFolder` tinha um bug que copiava arquivos para o diretório **errado**:
+
+```kotlin
+// ❌ ANTES (ERRADO)
+if (files.isEmpty()) {
+    copyAssetFile(context, assetPath, File(destDir.parentFile, File(assetPath).name))
+    // Copiava para o diretório PAI, não para o destino correto
+}
+```
+
+Resultado: Os arquivos `.so` eram copiados para o lugar errado e o PHP não conseguia encontrá-los.
+
+**Solução (v1.7):** Corrigir a lógica de extração:
+
+```kotlin
+// ✅ DEPOIS (CORRETO)
+private fun extractAssetFolder(context: Context, assetPath: String, destDir: File) {
+    val files = context.assets.list(assetPath) ?: return
+    
+    if (files.isEmpty()) {
+        // É um arquivo - destDir já é o caminho completo
+        copyAssetFile(context, assetPath, destDir)
+    } else {
+        // É um diretório - criar e processar recursivamente
+        destDir.mkdirs()
+        for (file in files) {
+            if (file == "README.md" || file == ".gitkeep") continue
+            extractAssetFolder(context, "$assetPath/$file", File(destDir, file))
+        }
+    }
+}
+```
+
+**Mudanças:**
+1. ✅ Corrigida lógica de caminho de destino dos arquivos
+2. ✅ Removida lógica de download (assets já estão no APK)
+3. ✅ Criar diretórios explicitamente antes de processar conteúdo
+4. ✅ Mensagens de erro mais claras quando assets não são encontrados
+
+**Benefícios:**
+- ✅ APK menor (não precisa baixar 50MB em runtime)
+- ✅ Funciona offline (não precisa de internet na primeira execução)
+- ✅ Mais rápido (extração local vs download)
+- ✅ Mais confiável (não depende de conectividade)
+
+### Soluções Anteriores
+
+#### v1.5: Separação de Binários e Dados
 
 #### Problema: error=13, Permission denied
 Após corrigir o exit code 126, surgiu um novo erro:
