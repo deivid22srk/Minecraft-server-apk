@@ -21,6 +21,9 @@ class ServerViewModel(application: Application) : AndroidViewModel(application) 
     private val _importStatus = MutableStateFlow<ImportStatus>(ImportStatus.Idle)
     val importStatus: StateFlow<ImportStatus> = _importStatus
     
+    private val _isPhpInstalled = MutableStateFlow(false)
+    val isPhpInstalled: StateFlow<Boolean> = _isPhpInstalled
+    
     private var minecraftServer: MinecraftServer? = null
     
     fun setMinecraftServer(server: MinecraftServer) {
@@ -41,6 +44,12 @@ class ServerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             server.consoleOutput.collect { output ->
                 updateServerState { it.copy(consoleOutput = output) }
+            }
+        }
+        
+        viewModelScope.launch {
+            server.isPhpInstalled.collect { installed ->
+                _isPhpInstalled.value = installed
             }
         }
         
@@ -91,6 +100,15 @@ class ServerViewModel(application: Application) : AndroidViewModel(application) 
     
     fun resetImportStatus() {
         _importStatus.value = ImportStatus.Idle
+    }
+    
+    fun installPhp() {
+        viewModelScope.launch {
+            val success = minecraftServer?.installPhp() ?: false
+            if (success) {
+                _isPhpInstalled.value = true
+            }
+        }
     }
     
     private fun updateServerState(update: (ServerState) -> ServerState) {

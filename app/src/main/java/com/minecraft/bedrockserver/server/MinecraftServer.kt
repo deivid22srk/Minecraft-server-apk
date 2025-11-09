@@ -9,14 +9,12 @@ import kotlinx.coroutines.flow.StateFlow
 import java.io.*
 import java.net.Inet4Address
 import java.net.NetworkInterface
-import java.net.ServerSocket
-import java.net.Socket
 
 class MinecraftServer(private val context: Context) {
     private val TAG = "MinecraftServer"
     private var serverProcess: Process? = null
-    private var proxySocket: ServerSocket? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val phpManager = PhpManager(context)
     
     private val _consoleOutput = MutableStateFlow<List<String>>(emptyList())
     val consoleOutput: StateFlow<List<String>> = _consoleOutput
@@ -27,14 +25,18 @@ class MinecraftServer(private val context: Context) {
     private val _playersOnline = MutableStateFlow(0)
     val playersOnline: StateFlow<Int> = _playersOnline
     
-    private val _publicAddress = MutableStateFlow<String>("")
-    val publicAddress: StateFlow<String> = _publicAddress
+    private val _isPhpInstalled = MutableStateFlow(false)
+    val isPhpInstalled: StateFlow<Boolean> = _isPhpInstalled
     
     private val serverDir: File
         get() = File(context.filesDir, "bedrock_server")
     
+    private val pocketMineFile: File
+        get() = File(serverDir, "PocketMine-MP.phar")
+    
     init {
         setupServerDirectory()
+        checkPhpInstallation()
     }
     
     private fun setupServerDirectory() {
@@ -44,225 +46,370 @@ class MinecraftServer(private val context: Context) {
         
         File(serverDir, "worlds").mkdirs()
         File(serverDir, "plugins").mkdirs()
+        File(serverDir, "players").mkdirs()
+        File(serverDir, "plugin_data").mkdirs()
         
-        val propertiesFile = File(serverDir, "server.properties")
-        if (!propertiesFile.exists()) {
-            val config = ServerConfig.load(context)
-            propertiesFile.writeText(config.toProperties())
-        }
-        
-        extractServerFiles()
+        extractPocketMine()
     }
     
-    private fun extractServerFiles() {
+    private fun checkPhpInstallation() {
+        _isPhpInstalled.value = phpManager.phpBinary.exists() && phpManager.phpBinary.canExecute()
+    }
+    
+    suspend fun installPhp(): Boolean {
+        return phpManager.ensurePhpInstalled { progress ->
+            addConsoleLog(progress)
+        }.also {
+            checkPhpInstallation()
+        }
+    }
+    
+    private fun extractPocketMine() {
         try {
-            val serverExecutable = File(serverDir, "bedrock_server")
-            if (!serverExecutable.exists()) {
-                addConsoleLog("Preparando servidor Bedrock...")
-                addConsoleLog("Para funcionar corretamente, você precisa:")
-                addConsoleLog("1. Baixar Minecraft Bedrock Server para ARM")
-                addConsoleLog("2. Ou usar um servidor proxy/túnel")
+            if (!pocketMineFile.exists()) {
+                addConsoleLog("📦 Extraindo PocketMine-MP...")
+                
+                val inputStream = context.assets.open("PocketMine-MP.phar")
+                val outputStream = FileOutputStream(pocketMineFile)
+                
+                inputStream.copyTo(outputStream)
+                inputStream.close()
+                outputStream.close()
+                
+                pocketMineFile.setReadable(true, false)
+                
+                val sizeMB = pocketMineFile.length() / (1024 * 1024)
+                addConsoleLog("✅ PocketMine-MP extraído (${sizeMB}MB)")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Erro ao extrair arquivos", e)
+            Log.e(TAG, "Erro ao extrair PocketMine", e)
+            addConsoleLog("⚠️  PocketMine-MP não encontrado nos assets")
         }
     }
     
     suspend fun startServer(config: ServerConfig) {
         if (_isRunning.value) {
-            addConsoleLog("Servidor já está rodando")
+            addConsoleLog("⚠️  Servidor já está rodando")
+            return
+        }
+        
+        if (!_isPhpInstalled.value) {
+            addConsoleLog("❌ PHP não está instalado")
+            addConsoleLog("Instale o PHP primeiro na tela inicial")
             return
         }
         
         try {
             updateServerProperties(config)
-            updateGameRules(config)
             
+            addConsoleLog("")
             addConsoleLog("===========================================")
-            addConsoleLog("Iniciando Minecraft Bedrock Server v1.21.120.4")
+            addConsoleLog("    🎮 MINECRAFT BEDROCK SERVER")
+            addConsoleLog("       v1.21.120.4 - PocketMine-MP")
             addConsoleLog("===========================================")
+            addConsoleLog("")
             
             val localIp = getLocalIpAddress()
             val port = config.port
             
-            addConsoleLog("Endereço Local: $localIp:$port")
+            addConsoleLog("📍 ENDEREÇOS DE CONEXÃO:")
+            addConsoleLog("")
+            addConsoleLog("   🏠 Mesma WiFi:")
+            addConsoleLog("      → $localIp:$port")
+            addConsoleLog("")
             
             if (config.publicServer) {
+                addConsoleLog("   🌐 WiFi Diferente (Escolha uma):")
                 addConsoleLog("")
-                addConsoleLog("🌐 SERVIDOR PÚBLICO ATIVADO")
+                addConsoleLog("   1️⃣  Playit.gg (Recomendado)")
+                addConsoleLog("      → https://playit.gg")
+                addConsoleLog("      → Crie túnel UDP → porta $port")
                 addConsoleLog("")
-                addConsoleLog("Para conectar SEM configurar roteador, use:")
-                addConsoleLog("📱 Opção 1: Playit.gg (Recomendado)")
-                addConsoleLog("   • Baixe: https://playit.gg/download")
-                addConsoleLog("   • Crie túnel UDP na porta $port")
-                addConsoleLog("   • Use o endereço fornecido no Minecraft")
+                addConsoleLog("   2️⃣  Ngrok")
+                addConsoleLog("      → ngrok tcp $port")
                 addConsoleLog("")
-                addConsoleLog("📱 Opção 2: Ngrok")
-                addConsoleLog("   • ngrok tcp $port")
+                addConsoleLog("   3️⃣  Radmin VPN")
+                addConsoleLog("      → Rede virtual gratuita")
                 addConsoleLog("")
-                addConsoleLog("📱 Opção 3: Radmin VPN / Hamachi")
-                addConsoleLog("   • Conecte todos os jogadores na mesma rede virtual")
-                
-                startTunnelService(port)
             }
             
-            _isRunning.value = true
+            addConsoleLog("===========================================")
+            addConsoleLog("")
             
-            startProxyServer(port, config)
-            
-            addConsoleLog("")
-            addConsoleLog("✅ Servidor proxy iniciado na porta $port")
-            addConsoleLog("⚠️  IMPORTANTE: Este é um servidor PROXY")
-            addConsoleLog("")
-            addConsoleLog("Para servidor real, você precisa:")
-            addConsoleLog("1. Instalar Termux no Android")
-            addConsoleLog("2. Baixar Bedrock Server ARM")
-            addConsoleLog("3. Ou usar PocketMine-MP via Termux")
-            addConsoleLog("")
-            addConsoleLog("📖 Guia completo: github.com/minecraft-server-apk")
+            startPocketMineServer(config)
             
         } catch (e: Exception) {
             Log.e(TAG, "Erro ao iniciar servidor", e)
-            addConsoleLog("❌ Erro ao iniciar servidor: ${e.message}")
+            addConsoleLog("❌ Erro: ${e.message}")
             _isRunning.value = false
         }
     }
     
-    private suspend fun startProxyServer(port: Int, config: ServerConfig) {
+    private suspend fun startPocketMineServer(config: ServerConfig) {
         withContext(Dispatchers.IO) {
             try {
-                proxySocket = ServerSocket(port)
-                addConsoleLog("Servidor proxy aguardando conexões...")
+                _isRunning.value = true
+                
+                addConsoleLog("🚀 Iniciando PocketMine-MP...")
+                addConsoleLog("")
+                
+                val phpPath = phpManager.phpBinary.absolutePath
+                val pharPath = pocketMineFile.absolutePath
+                
+                val startScript = File(serverDir, "start.sh")
+                startScript.writeText("""
+                    #!/system/bin/sh
+                    cd ${serverDir.absolutePath}
+                    exec ${phpPath} \
+                        -d memory_limit=1024M \
+                        -d error_reporting=E_ALL \
+                        -d display_errors=1 \
+                        ${pharPath} \
+                        --no-wizard \
+                        --disable-readline
+                """.trimIndent())
+                startScript.setExecutable(true, false)
+                
+                val processBuilder = ProcessBuilder("sh", startScript.absolutePath)
+                processBuilder.directory(serverDir)
+                processBuilder.redirectErrorStream(true)
+                
+                val env = processBuilder.environment()
+                env["POCKETMINE_LANGUAGE"] = "por"
+                env["POCKETMINE_IN_GAME"] = "1"
+                env["HOME"] = serverDir.absolutePath
+                
+                serverProcess = processBuilder.start()
                 
                 scope.launch {
-                    while (_isRunning.value) {
-                        try {
-                            val client = proxySocket?.accept()
-                            if (client != null) {
-                                handleClient(client, config)
-                            }
-                        } catch (e: Exception) {
-                            if (_isRunning.value) {
-                                Log.e(TAG, "Erro ao aceitar conexão", e)
-                            }
-                        }
+                    readProcessOutput(serverProcess!!)
+                }
+                
+                scope.launch {
+                    monitorServerProcess(serverProcess!!)
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Erro ao iniciar PocketMine", e)
+                addConsoleLog("❌ Erro ao iniciar: ${e.message}")
+                addConsoleLog("")
+                addConsoleLog("Stack trace:")
+                e.stackTrace.take(5).forEach {
+                    addConsoleLog("   ${it}")
+                }
+                _isRunning.value = false
+            }
+        }
+    }
+    
+    private suspend fun readProcessOutput(process: Process) {
+        withContext(Dispatchers.IO) {
+            try {
+                val reader = BufferedReader(InputStreamReader(process.inputStream))
+                var line: String?
+                
+                while (reader.readLine().also { line = it } != null) {
+                    line?.let { 
+                        addConsoleLog(it)
+                        parseServerOutput(it)
                     }
                 }
+                
             } catch (e: Exception) {
-                addConsoleLog("⚠️  Não foi possível iniciar na porta $port")
-                addConsoleLog("A porta pode estar em uso")
+                if (_isRunning.value) {
+                    Log.e(TAG, "Erro ao ler output", e)
+                }
             }
         }
     }
     
-    private fun handleClient(client: Socket, config: ServerConfig) {
-        scope.launch {
+    private suspend fun monitorServerProcess(process: Process) {
+        withContext(Dispatchers.IO) {
             try {
-                val playerCount = _playersOnline.value + 1
-                _playersOnline.value = playerCount
+                val exitCode = process.waitFor()
                 
-                addConsoleLog("🎮 Tentativa de conexão de: ${client.inetAddress.hostAddress}")
-                addConsoleLog("Jogadores online: $playerCount/${config.maxPlayers}")
+                addConsoleLog("")
+                addConsoleLog("⚠️  Servidor encerrado (código: $exitCode)")
                 
-                val input = BufferedReader(InputStreamReader(client.getInputStream()))
-                val output = DataOutputStream(client.getOutputStream())
-                
-                val handshake = input.readLine()
-                addConsoleLog("📦 Handshake recebido: $handshake")
-                
-                val response = createServerResponse(config)
-                output.write(response.toByteArray())
-                output.flush()
-                
-                delay(5000)
-                
-                client.close()
-                _playersOnline.value = _playersOnline.value - 1
-                addConsoleLog("👋 Jogador desconectado")
+                _isRunning.value = false
+                _playersOnline.value = 0
                 
             } catch (e: Exception) {
+                Log.e(TAG, "Erro ao monitorar processo", e)
+            }
+        }
+    }
+    
+    private fun parseServerOutput(line: String) {
+        when {
+            line.contains("Done", ignoreCase = true) && line.contains("For help") -> {
+                addConsoleLog("")
+                addConsoleLog("🎉 SERVIDOR PRONTO!")
+                addConsoleLog("✅ Jogadores podem se conectar agora!")
+                addConsoleLog("")
+            }
+            line.contains("logged in with entity id", ignoreCase = true) -> {
+                _playersOnline.value = _playersOnline.value + 1
+                val playerName = line.substringAfter("INFO]: ").substringBefore("[/")
+                addConsoleLog("👋 $playerName entrou no servidor!")
+            }
+            line.contains("logged out due to", ignoreCase = true) -> {
                 _playersOnline.value = maxOf(0, _playersOnline.value - 1)
-                Log.e(TAG, "Erro ao processar cliente", e)
             }
-        }
-    }
-    
-    private fun createServerResponse(config: ServerConfig): String {
-        return buildString {
-            append("MCPE;")
-            append(config.serverName).append(";")
-            append("527;") // Protocol version 1.21.1
-            append("1.21.120.4;")
-            append(_playersOnline.value).append(";")
-            append(config.maxPlayers).append(";")
-            append("0;") // Server GUID
-            append("Bedrock level;")
-            append(config.gameMode.uppercase()).append(";")
-            append("1;")
-            append(config.port).append(";")
-            append(config.port).append(";\n")
-        }
-    }
-    
-    private fun startTunnelService(port: Int) {
-        scope.launch {
-            try {
-                addConsoleLog("🔗 Tentando iniciar túnel automático...")
-                
-                delay(1000)
-                
-                addConsoleLog("⚠️  Túnel automático não disponível")
-                addConsoleLog("Use as opções manuais acima")
-                
-            } catch (e: Exception) {
-                Log.e(TAG, "Erro ao iniciar túnel", e)
+            line.contains("ERROR", ignoreCase = true) -> {
+                Log.e(TAG, line)
             }
         }
     }
     
     fun stopServer() {
         try {
-            addConsoleLog("Parando servidor...")
+            addConsoleLog("")
+            addConsoleLog("⏹️  Enviando comando stop...")
             
-            proxySocket?.close()
-            proxySocket = null
+            serverProcess?.outputStream?.write("stop\n".toByteArray())
+            serverProcess?.outputStream?.flush()
             
-            serverProcess?.destroy()
-            serverProcess = null
+            scope.launch {
+                delay(10000)
+                if (serverProcess?.isAlive == true) {
+                    addConsoleLog("⚠️  Forçando encerramento...")
+                    serverProcess?.destroyForcibly()
+                }
+            }
             
-            _isRunning.value = false
-            _playersOnline.value = 0
-            
-            addConsoleLog("✅ Servidor parado")
         } catch (e: Exception) {
             Log.e(TAG, "Erro ao parar servidor", e)
-            addConsoleLog("❌ Erro ao parar servidor: ${e.message}")
+            addConsoleLog("❌ Erro ao parar: ${e.message}")
+            serverProcess?.destroyForcibly()
+            _isRunning.value = false
+            _playersOnline.value = 0
         }
     }
     
     private fun updateServerProperties(config: ServerConfig) {
         val propertiesFile = File(serverDir, "server.properties")
         propertiesFile.writeText(config.toProperties())
+        
+        createPocketMineYml(config)
     }
     
-    private fun updateGameRules(config: ServerConfig) {
-        val worldDir = File(serverDir, "worlds/Bedrock level")
+    private fun createPocketMineYml(config: ServerConfig) {
+        val yml = File(serverDir, "pocketmine.yml")
+        yml.writeText("""
+settings:
+ language: "por"
+ force-language: false
+ shutdown-message: "Servidor encerrado"
+ query-plugins: true
+ deprecated-verbose: default
+ enable-profiling: false
+ profile-report-trigger: 20
+ async-workers: auto
+
+memory:
+ global-limit: 0
+ main-limit: 0
+ main-hard-limit: 1024
+ check-rate: 20
+ continuous-trigger: true
+ continuous-trigger-rate: 30
+ garbage-collection:
+  period: 36000
+  collect-async-worker: true
+  low-memory-trigger: true
+
+network:
+ batch-threshold: 256
+ compression-level: 7
+ compression-async: true
+ upnp-forwarding: false
+ max-mtu-size: 1492
+
+debug:
+ commands: false
+ level: 1
+
+level-settings:
+ default-format: leveldb
+ auto-tick-rate: true
+ auto-tick-rate-limit: 20
+ base-tick-rate: 1
+ always-tick-players: false
+
+chunk-sending:
+ per-tick: 4
+ max-chunks: 192
+ spawn-threshold: 56
+ cache-chunks: true
+
+chunk-ticking:
+ per-tick: 40
+ tick-radius: 3
+ light-updates: false
+ clear-tick-list: true
+ disable-block-ticking: false
+
+chunk-generation:
+ queue-size: 8
+ population-queue-size: 8
+
+ticks-per:
+ autosave: 6000
+
+auto-report:
+ enabled: false
+        """.trimIndent())
+        
+        createServerPropertiesPm(config)
+    }
+    
+    private fun createServerPropertiesPm(config: ServerConfig) {
+        val props = File(serverDir, "server.properties")
+        props.writeText("""
+motd=${config.serverName}
+server-port=${config.port}
+server-ip=0.0.0.0
+max-players=${config.maxPlayers}
+gamemode=${when(config.gameMode) { "survival" -> "0"; "creative" -> "1"; "adventure" -> "2"; else -> "0" }}
+difficulty=${when(config.difficulty) { "peaceful" -> "0"; "easy" -> "1"; "normal" -> "2"; "hard" -> "3"; else -> "1" }}
+pvp=${config.pvp}
+white-list=${config.enableWhitelist}
+announce-player-achievements=true
+spawn-protection=16
+allow-flight=false
+force-gamemode=false
+hardcore=false
+online-mode=false
+level-name=world
+level-seed=${config.levelSeed}
+level-type=DEFAULT
+enable-command-block=true
+spawn-animals=true
+spawn-mobs=true
+generate-structures=true
+        """.trimIndent())
+        
+        if (config.keepInventory || config.showCoordinates) {
+            createWorldGameRules(config)
+        }
+    }
+    
+    private fun createWorldGameRules(config: ServerConfig) {
+        val worldDir = File(serverDir, "worlds/world")
         worldDir.mkdirs()
         
-        val gameRules = mutableListOf<String>()
+        val commandsFile = File(serverDir, "startup_commands.txt")
+        val commands = mutableListOf<String>()
+        
         if (config.keepInventory) {
-            gameRules.add("gamerule keepInventory true")
+            commands.add("gamerule keepInventory true")
         }
         if (config.showCoordinates) {
-            gameRules.add("gamerule showcoordinates true")
+            commands.add("gamerule showcoordinates true")
         }
         
-        val commandFile = File(serverDir, "commands.txt")
-        commandFile.writeText(gameRules.joinToString("\n"))
-        
-        addConsoleLog("⚙️  Configurações aplicadas:")
-        addConsoleLog("  • Keep Inventory: ${config.keepInventory}")
-        addConsoleLog("  • Show Coordinates: ${config.showCoordinates}")
+        commandsFile.writeText(commands.joinToString("\n"))
     }
     
     fun executeCommand(command: String) {
@@ -274,26 +421,9 @@ class MinecraftServer(private val context: Context) {
         try {
             addConsoleLog("> $command")
             
-            when {
-                command.startsWith("gamerule") -> {
-                    addConsoleLog("✅ Game rule aplicada")
-                }
-                command == "list" -> {
-                    addConsoleLog("Jogadores online: ${_playersOnline.value}/${ServerConfig.load(context).maxPlayers}")
-                }
-                command == "help" -> {
-                    addConsoleLog("Comandos disponíveis:")
-                    addConsoleLog("  list - Lista jogadores online")
-                    addConsoleLog("  gamerule <rule> <value> - Define regra")
-                    addConsoleLog("  stop - Para o servidor")
-                }
-                command == "stop" -> {
-                    stopServer()
-                }
-                else -> {
-                    addConsoleLog("⚠️  Comando não reconhecido. Use 'help'")
-                }
-            }
+            serverProcess?.outputStream?.write("$command\n".toByteArray())
+            serverProcess?.outputStream?.flush()
+            
         } catch (e: Exception) {
             addConsoleLog("❌ Erro ao executar comando: ${e.message}")
         }
@@ -302,20 +432,25 @@ class MinecraftServer(private val context: Context) {
     suspend fun importFromAternos(aternosUrl: String): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                addConsoleLog("📥 Importando mundo do Aternos...")
+                addConsoleLog("📥 Importando do Aternos...")
                 addConsoleLog("URL: $aternosUrl")
+                addConsoleLog("")
                 
-                delay(2000)
+                delay(1500)
                 
-                addConsoleLog("⚠️  Importação do Aternos em desenvolvimento")
-                addConsoleLog("Por enquanto, você pode:")
-                addConsoleLog("1. Baixar mundo do Aternos manualmente")
-                addConsoleLog("2. Colocar na pasta: ${serverDir.absolutePath}/worlds")
+                addConsoleLog("⚠️  Importação automática em desenvolvimento")
+                addConsoleLog("")
+                addConsoleLog("COMO IMPORTAR MANUALMENTE:")
+                addConsoleLog("1. Faça backup do mundo no Aternos")
+                addConsoleLog("2. Baixe o arquivo .zip")
+                addConsoleLog("3. Extraia em:")
+                addConsoleLog("   ${serverDir.absolutePath}/worlds/world")
+                addConsoleLog("4. Reinicie o servidor")
+                addConsoleLog("")
                 
                 false
             } catch (e: Exception) {
-                Log.e(TAG, "Erro ao importar do Aternos", e)
-                addConsoleLog("❌ Erro ao importar: ${e.message}")
+                addConsoleLog("❌ Erro: ${e.message}")
                 false
             }
         }
@@ -324,9 +459,14 @@ class MinecraftServer(private val context: Context) {
     private fun addConsoleLog(message: String) {
         val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
             .format(java.util.Date())
-        val logMessage = "[$timestamp] $message"
         
-        _consoleOutput.value = (_consoleOutput.value + logMessage).takeLast(200)
+        val logMessage = if (message.startsWith("[")) {
+            message
+        } else {
+            "[$timestamp] $message"
+        }
+        
+        _consoleOutput.value = (_consoleOutput.value + logMessage).takeLast(500)
         Log.d(TAG, message)
     }
     
@@ -335,11 +475,16 @@ class MinecraftServer(private val context: Context) {
             val interfaces = NetworkInterface.getNetworkInterfaces()
             while (interfaces.hasMoreElements()) {
                 val networkInterface = interfaces.nextElement()
-                val addresses = networkInterface.inetAddresses
-                while (addresses.hasMoreElements()) {
-                    val addr = addresses.nextElement()
-                    if (!addr.isLoopbackAddress && addr is Inet4Address) {
-                        return addr.hostAddress ?: "Unknown"
+                if (networkInterface.isUp && !networkInterface.isLoopback) {
+                    val addresses = networkInterface.inetAddresses
+                    while (addresses.hasMoreElements()) {
+                        val addr = addresses.nextElement()
+                        if (!addr.isLoopbackAddress && addr is Inet4Address) {
+                            val ip = addr.hostAddress
+                            if (ip != null && ip.startsWith("192.168.")) {
+                                return ip
+                            }
+                        }
                     }
                 }
             }
@@ -352,13 +497,12 @@ class MinecraftServer(private val context: Context) {
     suspend fun getPublicIpAddress(): String {
         return withContext(Dispatchers.IO) {
             try {
-                val process = Runtime.getRuntime().exec("curl -s https://api.ipify.org")
+                val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", "curl -s https://api.ipify.org"))
                 val reader = BufferedReader(InputStreamReader(process.inputStream))
                 val ip = reader.readLine() ?: "Unknown"
                 process.waitFor()
                 ip
             } catch (e: Exception) {
-                Log.e(TAG, "Erro ao obter IP público", e)
                 "Unknown"
             }
         }

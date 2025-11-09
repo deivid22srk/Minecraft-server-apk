@@ -28,6 +28,7 @@ import com.minecraft.bedrockserver.service.MinecraftServerService
 import com.minecraft.bedrockserver.ui.screens.ConsoleScreen
 import com.minecraft.bedrockserver.ui.screens.HomeScreen
 import com.minecraft.bedrockserver.ui.screens.SettingsScreen
+import com.minecraft.bedrockserver.ui.screens.SetupScreen
 import com.minecraft.bedrockserver.ui.theme.MinecraftServerTheme
 import com.minecraft.bedrockserver.viewmodel.ServerViewModel
 
@@ -109,8 +110,18 @@ fun MainNavigation(viewModel: ServerViewModel) {
     val serverState by viewModel.serverState.collectAsState()
     val config by viewModel.config.collectAsState()
     val importStatus by viewModel.importStatus.collectAsState()
+    val isPhpInstalled by viewModel.isPhpInstalled.collectAsState()
     
-    NavHost(navController = navController, startDestination = "home") {
+    val startDestination = if (isPhpInstalled) "home" else "setup"
+    
+    NavHost(navController = navController, startDestination = startDestination) {
+        composable("setup") {
+            SetupScreen(
+                isPhpInstalled = isPhpInstalled,
+                onInstallPhp = { viewModel.installPhp() },
+                onSkip = { navController.navigate("home") }
+            )
+        }
         composable("home") {
             HomeScreen(
                 serverState = serverState,

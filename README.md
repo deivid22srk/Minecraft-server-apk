@@ -2,13 +2,15 @@
 
 <div align="center">
   <h3>🎮 Servidor Minecraft Bedrock 1.21.120.4 para Android</h3>
-  <p>Execute um servidor Minecraft Bedrock completo no seu dispositivo Android com interface Material You</p>
+  <p>Execute um servidor Minecraft Bedrock REAL no seu dispositivo Android</p>
+  <p><strong>⚡ Powered by PocketMine-MP</strong></p>
 </div>
 
 ## ✨ Funcionalidades
 
-- 🚀 **Servidor Bedrock 1.21.120.4** completo rodando nativamente no Android
-- 🌐 **Servidor Público** - Acessível de qualquer rede WiFi (não apenas localhost)
+- 🚀 **PocketMine-MP Real** - Servidor Bedrock completo e funcional
+- 📦 **PHP Incluído** - Download automático, sem necessidade de Termux
+- 🌐 **Sem Port Forwarding** - Conecte usando Playit.gg, Ngrok ou Radmin VPN
 - 🎨 **Interface Material You** - Design moderno com Jetpack Compose e Material3
 - ⚙️ **Configurações Completas**:
   - ✅ Ativar/desativar coordenadas no jogo
@@ -35,8 +37,10 @@
 - **Jetpack Compose** - UI moderna e declarativa
 - **Material3** - Design System do Material You
 - **Coroutines** - Programação assíncrona
-- **PocketMine-MP** - Engine do servidor Minecraft Bedrock
+- **PocketMine-MP 5.x** - Engine REAL do servidor Minecraft Bedrock
+- **PHP 8.2** - Runtime para PocketMine (baixado automaticamente)
 - **Gradle** - Build system
+- **OkHttp** - Download de componentes
 
 ## 📦 Instalação
 
@@ -57,9 +61,18 @@ O APK será gerado em: `app/build/outputs/apk/debug/app-debug.apk`
 
 ## 🎮 Como Usar
 
+### Primeira Execução:
+
 1. **Instale o APK** no seu dispositivo Android
-2. **Abra o aplicativo** e conceda as permissões necessárias
-3. **Configure o servidor** nas configurações:
+2. **Abra o aplicativo**
+3. **Instale o PHP** (clique em "Baixar e Instalar")
+   - O app baixa automaticamente (~15MB)
+   - Não precisa do Termux!
+4. Aguarde a instalação concluir
+
+### Configurar e Iniciar:
+
+1. **Configure o servidor** nas configurações:
    - Nome do servidor
    - Porta (padrão: 19132)
    - Número máximo de jogadores
@@ -68,17 +81,31 @@ O APK será gerado em: `app/build/outputs/apk/debug/app-debug.apk`
 4. **Inicie o servidor** na tela principal
 5. **Conecte-se** usando o endereço IP mostrado no app
 
-### Servidor Público (Acesso de Qualquer WiFi)
+### Servidor Público (Acesso de Qualquer WiFi) - SEM Port Forwarding!
 
-Para permitir que jogadores se conectem de qualquer rede:
+**Método 1: Playit.gg** (⭐ Recomendado)
 
-1. Ative "**Servidor Público**" nas configurações
-2. Configure **Port Forwarding** no seu roteador:
-   - Porta externa: 19132 (ou a porta que você configurou)
-   - Porta interna: 19132
-   - Protocolo: UDP
-   - IP: O IP local do seu dispositivo Android
-3. Use o **Endereço Público** mostrado no app para compartilhar com os jogadores
+1. No **PC ou outro dispositivo**:
+   ```bash
+   # Baixe em https://playit.gg
+   # Execute e crie túnel UDP → porta 19132
+   ```
+2. Use o endereço fornecido no Minecraft (ex: `xyz.playit.gg:12345`)
+
+**Método 2: Radmin VPN** (Fácil)
+
+1. Instale Radmin VPN em todos os dispositivos
+2. Crie uma rede e conecte todos
+3. Use o IP da rede virtual + porta 19132
+
+**Método 3: Ngrok**
+
+```bash
+ngrok tcp 19132
+# Use o endereço tcp://x.tcp.ngrok.io:xxxxx
+```
+
+Veja [GUIA_COMPLETO.md](GUIA_COMPLETO.md) para mais detalhes!
 
 ### Importar do Aternos
 
