@@ -5,12 +5,17 @@ import android.os.Build
 import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
+import java.net.URL
+import java.util.zip.ZipInputStream
 
 object AssetExtractor {
     private const val TAG = "AssetExtractor"
-    private const val EXTRACTION_VERSION = "1.3"
+    private const val EXTRACTION_VERSION = "1.4"
     private const val PREFS_NAME = "asset_extractor"
     private const val KEY_VERSION = "extracted_version"
+    
+    private const val PHP_BINARY_URL = "https://github.com/pmmp/PHP-Binaries/releases/download/php-8.2.19-pmmp/PHP-8.2.19-Linux-aarch64.tar.gz"
+    private const val POCKETMINE_PHAR_URL = "https://github.com/pmmp/PocketMine-MP/releases/download/5.11.2/PocketMine-MP.phar"
     
     fun extractIfNeeded(context: Context): File {
         val baseDir = File(context.filesDir, "bedrock_server")
@@ -38,11 +43,22 @@ object AssetExtractor {
         extractAssetFolder(context, "php/$abi", baseDir)
         
         val phpBinary = File(baseDir, "bin/php7/bin/php")
+        if (!phpBinary.exists()) {
+            Log.i(TAG, "PHP binary not found, downloading...")
+            try {
+                downloadAndExtractPhpBinary(baseDir)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to download PHP binary", e)
+                throw RuntimeException("Falha ao baixar binário PHP: ${e.message}", e)
+            }
+        }
+        
         if (phpBinary.exists()) {
             setExecutablePermissions(phpBinary)
             Log.i(TAG, "PHP binary found and set executable: ${phpBinary.absolutePath}")
         } else {
             Log.e(TAG, "PHP binary not found at: ${phpBinary.absolutePath}")
+            throw RuntimeException("Binário PHP não encontrado após extração")
         }
         
         val binDir = File(baseDir, "bin/php7/bin")
@@ -66,6 +82,17 @@ object AssetExtractor {
         val pocketMineDir = File(baseDir, "pocketmine")
         pocketMineDir.mkdirs()
         extractAssetFolder(context, "pocketmine", pocketMineDir)
+        
+        val pharFile = File(pocketMineDir, "PocketMine-MP.phar")
+        if (!pharFile.exists()) {
+            Log.i(TAG, "PocketMine-MP.phar not found, downloading...")
+            try {
+                downloadPocketMinePhar(pharFile)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to download PocketMine-MP.phar", e)
+                throw RuntimeException("Falha ao baixar PocketMine-MP.phar: ${e.message}", e)
+            }
+        }
         
         File(baseDir, "worlds").mkdirs()
         File(baseDir, "plugins").mkdirs()
@@ -136,6 +163,125 @@ object AssetExtractor {
         } catch (e: Exception) {
             Log.w(TAG, "Failed to set permissions for ${file.absolutePath}: ${e.message}")
             file.setExecutable(true, false)
+        }
+    }
+    
+    private fun downloadAndExtractPhpBinary(baseDir: File) {
+        try {
+            val tempFile = File(baseDir, "php_binary.tar.gz")
+            Log.i(TAG, "Downloading PHP binary from $PHP_BINARY_URL")
+            Log.i(TAG, "Aguarde, baixando binário PHP (aproximadamente 50MB)...")
+            
+            val connection = URL(PHP_BINARY_URL).openConnection()
+            connection.connect()
+            val fileLength = connection.contentLength
+            
+            connection.getInputStream().use { input ->
+                FileOutputStream(tempFile).use { output ->
+                    val buffer = ByteArray(8192)
+                    var total = 0L
+                    var count: Int
+                    var lastProgress = 0
+                    
+                    while (input.read(buffer).also { count = it } != -1) {
+                        total += count
+                        output.write(buffer, 0, count)
+                        
+                        if (fileLength > 0) {
+                            val progress = ((total * 100) / fileLength).toInt()
+                            if (progress >= lastProgress + 10) {
+                                Log.i(TAG, "Download progress: $progress%")
+                                lastProgress = progress
+                            }
+                        }
+                    }
+                }
+            }
+            
+            Log.i(TAG, "Download concluído! Extraindo PHP binary...")
+            extractTarGz(tempFile, baseDir)
+            tempFile.delete()
+            
+            val phpBinary = File(baseDir, "bin/php7/bin/php")
+            if (phpBinary.exists()) {
+                setExecutablePermissions(phpBinary)
+                
+                val binDir = File(baseDir, "bin/php7/bin")
+                binDir.listFiles()?.forEach { file ->
+                    if (file.isFile) {
+                        setExecutablePermissions(file)
+                    }
+                }
+                
+                val libPath = File(baseDir, "bin/php7/lib")
+                if (libPath.exists()) {
+                    libPath.walk().filter { it.extension == "so" }.forEach { 
+                        setExecutablePermissions(it)
+                    }
+                }
+                
+                Log.i(TAG, "PHP binary extracted and configured successfully")
+            } else {
+                throw RuntimeException("PHP binary not found after extraction")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error downloading PHP binary", e)
+            throw e
+        }
+    }
+    
+    private fun downloadPocketMinePhar(pharFile: File) {
+        try {
+            Log.i(TAG, "Downloading PocketMine-MP.phar from $POCKETMINE_PHAR_URL")
+            Log.i(TAG, "Baixando PocketMine-MP (aproximadamente 8MB)...")
+            
+            val connection = URL(POCKETMINE_PHAR_URL).openConnection()
+            connection.connect()
+            val fileLength = connection.contentLength
+            
+            connection.getInputStream().use { input ->
+                FileOutputStream(pharFile).use { output ->
+                    val buffer = ByteArray(8192)
+                    var total = 0L
+                    var count: Int
+                    var lastProgress = 0
+                    
+                    while (input.read(buffer).also { count = it } != -1) {
+                        total += count
+                        output.write(buffer, 0, count)
+                        
+                        if (fileLength > 0) {
+                            val progress = ((total * 100) / fileLength).toInt()
+                            if (progress >= lastProgress + 10) {
+                                Log.i(TAG, "Download progress: $progress%")
+                                lastProgress = progress
+                            }
+                        }
+                    }
+                }
+            }
+            
+            Log.i(TAG, "PocketMine-MP.phar downloaded successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error downloading PocketMine-MP.phar", e)
+            throw e
+        }
+    }
+    
+    private fun extractTarGz(tarGzFile: File, destDir: File) {
+        try {
+            val process = ProcessBuilder(
+                "tar", "-xzf", tarGzFile.absolutePath, "-C", destDir.absolutePath
+            ).start()
+            
+            val exitCode = process.waitFor()
+            if (exitCode != 0) {
+                val error = process.errorStream.bufferedReader().readText()
+                throw RuntimeException("tar extraction failed with code $exitCode: $error")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error extracting tar.gz", e)
+            throw e
         }
     }
     

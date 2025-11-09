@@ -27,7 +27,8 @@
 - **Android 7.0 (API 24) ou superior**
 - **Dispositivo ARM64 (64-bit) - ARMv7 (32-bit) não é suportado**
 - Mínimo 2GB de RAM recomendado
-- Conexão com internet para servidor público
+- **Conexão com internet (obrigatória no primeiro uso para baixar binários)**
+- Aproximadamente 100MB de espaço livre
 - Permissões de notificação (Android 13+)
 
 ## 🔧 Tecnologias
@@ -60,14 +61,20 @@ O APK será gerado em: `app/build/outputs/apk/debug/app-debug.apk`
 
 1. **Instale o APK** no seu dispositivo Android
 2. **Abra o aplicativo** e conceda as permissões necessárias
-3. **Configure o servidor** nas configurações:
+3. **Aguarde o download inicial** (primeira execução):
+   - O app irá baixar automaticamente:
+     - ⬇️ Binários PHP (≈50MB)
+     - ⬇️ PocketMine-MP (≈8MB)
+   - Este processo acontece apenas uma vez
+   - Requer conexão com internet
+4. **Configure o servidor** nas configurações:
    - Nome do servidor
    - Porta (padrão: 19132)
    - Número máximo de jogadores
    - Ativar servidor público
    - Keep Inventory e Show Coordinates
-4. **Inicie o servidor** na tela principal
-5. **Conecte-se** usando o endereço IP mostrado no app
+5. **Inicie o servidor** na tela principal
+6. **Conecte-se** usando o endereço IP mostrado no app
 
 ### Servidor Público (Acesso de Qualquer WiFi)
 
