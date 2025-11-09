@@ -4,22 +4,182 @@
 
 ### Erro Original
 ```
-[13:56:42] ✗ Processo PHP morreu imediatamente após start()
-[13:56:42] ✗ Exit code: 126
+[14:31:07] ✗ Processo PHP morreu imediatamente após start()
+[14:31:07] ✗ Exit code: 126
 ```
 
 ### Causa Raiz
 O **exit code 126** em sistemas Unix/Linux significa:
 - "Command invoked cannot execute" (Comando invocado não pode ser executado)
 
-No contexto do app, isso ocorreu porque:
-1. **Binários PHP ausentes**: A pasta `assets/php/arm64-v8a/` estava vazia (apenas .gitkeep)
-2. **PocketMine-MP.phar ausente**: A pasta `assets/pocketmine/` estava vazia (apenas .gitkeep)
-3. O código tentava executar um arquivo que não existia
+No contexto do app, isso pode ocorrer por:
+1. **Binários PHP ausentes ou corrompidos**: A pasta `assets/php/arm64-v8a/` vazia ou incompleta
+2. **PocketMine-MP.phar ausente**: A pasta `assets/pocketmine/` vazia
+3. **Permissões de execução incorretas**: Binários sem chmod 755
+4. **Arquitetura incompatível**: Dispositivo não é ARM64
+5. **Bibliotecas compartilhadas (.so) com problemas**: Faltando ou ilegíveis
+6. **Comando mal formatado**: Problemas com aspas ou variáveis de ambiente
 
-## ✅ Solução Implementada
+## ✅ Soluções Implementadas
 
-### 1. Download Automático de Binários
+### 1. Correções no MinecraftServer.kt (NOVA ATUALIZAÇÃO)
+
+#### 1.1. Teste de Compatibilidade do Binário PHP
+Antes de tentar iniciar o servidor, agora testamos se o binário PHP é compatível:
+
+```kotlin
+// Testar o binário PHP primeiro
+addConsoleLog("Testando compatibilidade do binário PHP...")
+val testProcess = ProcessBuilder(
+    phpBinary.absolutePath, "-v"
+).apply {
+    environment()["LD_LIBRARY_PATH"] = libPath.absolutePath
+}.start()
+
+testProcess.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+val testExitCode = testProcess.exitValue()
+
+if (testExitCode == 126) {
+    addConsoleLog("✗ ERRO: Binário PHP incompatível com seu dispositivo")
+    addConsoleLog("✗ Verifique se seu dispositivo é ARM64 (aarch64)")
+    return@withContext
+}
+```
+
+**Benefícios:**
+- Detecta problemas antes de tentar iniciar o servidor
+- Fornece mensagens de erro específicas
+- Exit code 126 = incompatível
+- Exit code 127 = não encontrado/bibliotecas faltando
+
+#### 1.2. Comando ProcessBuilder Melhorado
+Mudamos de `sh -c` com string complexa para comandos diretos:
+
+**Antes (problemático):**
+```kotlin
+val processBuilder = ProcessBuilder(
+    "sh", "-c",
+    "export LD_LIBRARY_PATH='${libPath.absolutePath}' && " +
+    "export HOME='${serverDir.absolutePath}' && " +
+    "cd '${serverDir.absolutePath}' && " +
+    "'${phpBinary.absolutePath}' $phpIniArg '${pharFile.absolutePath}' ..."
+)
+```
+
+**Depois (correto):**
+```kotlin
+val commandList = mutableListOf(phpBinary.absolutePath)
+
+if (phpIni.exists()) {
+    commandList.add("-c")
+    commandList.add(phpIni.absolutePath)
+}
+
+commandList.addAll(listOf(
+    pharFile.absolutePath,
+    "--data=${serverDir.absolutePath}",
+    "--plugins=${serverDir.absolutePath}/plugins",
+    "--no-wizard",
+    "--enable-ansi"
+))
+
+val processBuilder = ProcessBuilder(commandList)
+
+// Variáveis de ambiente diretas no ProcessBuilder
+processBuilder.environment().apply {
+    put("LD_LIBRARY_PATH", libPath.absolutePath)
+    put("HOME", serverDir.absolutePath)
+    put("TMPDIR", context.cacheDir.absolutePath)
+}
+
+processBuilder.redirectErrorStream(true)
+```
+
+**Vantagens:**
+- Evita problemas com aspas aninhadas
+- Variáveis de ambiente configuradas corretamente
+- Mais fácil de debugar
+- Redireciona stderr para stdout (captura todos os erros)
+
+#### 1.3. Mensagens de Erro Detalhadas
+Adicionado interpretação inteligente dos códigos de saída:
+
+```kotlin
+when (exitCode) {
+    126 -> {
+        addConsoleLog("✗ ERRO 126: Binário não pode ser executado")
+        addConsoleLog("  Possíveis causas:")
+        addConsoleLog("  1. Binário incompatível com a arquitetura do dispositivo")
+        addConsoleLog("  2. Falta de permissões de execução")
+        addConsoleLog("  3. Bibliotecas compartilhadas incompatíveis")
+        addConsoleLog("  Verifique se seu dispositivo é ARM64 (não ARM32)")
+    }
+    127 -> {
+        addConsoleLog("✗ ERRO 127: Comando não encontrado")
+        addConsoleLog("  O binário PHP ou suas dependências não foram encontrados")
+    }
+}
+```
+
+### 2. Melhorias no AssetExtractor.kt (NOVA ATUALIZAÇÃO)
+
+#### 2.1. Verificação de Arquitetura Aprimorada
+```kotlin
+private fun getSupportedAbi(): String {
+    val supportedAbis = Build.SUPPORTED_ABIS
+    Log.i(TAG, "Device ABIs: ${supportedAbis.joinToString(", ")}")
+    
+    return if (supportedAbis.contains("arm64-v8a")) {
+        Log.i(TAG, "Device is ARM64 compatible")
+        "arm64-v8a"
+    } else {
+        Log.e(TAG, "Your device appears to be: ${supportedAbis.firstOrNull() ?: "unknown"}")
+        throw UnsupportedOperationException(
+            "Dispositivo não suportado. Este aplicativo requer ARM64 (64-bit).\n" +
+            "Seu dispositivo é: ${supportedAbis.firstOrNull() ?: "desconhecido"}"
+        )
+    }
+}
+```
+
+#### 2.2. Permissões Mais Robustas
+```kotlin
+private fun setExecutablePermissions(file: File) {
+    try {
+        // Múltiplas formas de definir permissões
+        file.setExecutable(true, false)
+        file.setReadable(true, false)
+        file.setWritable(true, false)
+        
+        // Tentar chmod via Runtime
+        val chmodProcess = Runtime.getRuntime().exec(arrayOf("chmod", "755", file.absolutePath))
+        val exitCode = chmodProcess.waitFor()
+        if (exitCode != 0) {
+            Log.w(TAG, "chmod returned non-zero: $exitCode for ${file.name}")
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "Failed to set permissions: ${e.message}")
+    }
+}
+```
+
+#### 2.3. Contagem de Bibliotecas .so
+Agora contamos e logamos quantas bibliotecas foram configuradas:
+
+```kotlin
+val libPath = File(baseDir, "bin/php7/lib")
+if (libPath.exists()) {
+    var soCount = 0
+    libPath.walk().filter { it.extension == "so" }.forEach { 
+        setExecutablePermissions(it)
+        it.setReadable(true, false)
+        soCount++
+    }
+    Log.i(TAG, "Configured $soCount .so libraries")
+}
+```
+
+### 3. Download Automático de Binários (Já existia)
 
 Modificamos `AssetExtractor.kt` para baixar automaticamente os binários na primeira execução:
 

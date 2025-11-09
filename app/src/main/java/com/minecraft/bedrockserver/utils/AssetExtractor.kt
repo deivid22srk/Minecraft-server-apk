@@ -73,10 +73,16 @@ object AssetExtractor {
         
         val libPath = File(baseDir, "bin/php7/lib")
         if (libPath.exists()) {
+            var soCount = 0
             libPath.walk().filter { it.extension == "so" }.forEach { 
                 setExecutablePermissions(it)
+                it.setReadable(true, false)
+                soCount++
             }
             Log.i(TAG, "PHP libraries found at: ${libPath.absolutePath}")
+            Log.i(TAG, "Configured $soCount .so libraries")
+        } else {
+            Log.e(TAG, "Library path not found: ${libPath.absolutePath}")
         }
         
         val pocketMineDir = File(baseDir, "pocketmine")
@@ -156,13 +162,25 @@ object AssetExtractor {
     
     private fun setExecutablePermissions(file: File) {
         try {
-            Runtime.getRuntime().exec(arrayOf("chmod", "755", file.absolutePath)).waitFor()
+            // Tentar múltiplas formas de definir permissões
             file.setExecutable(true, false)
             file.setReadable(true, false)
+            file.setWritable(true, false)
+            
+            // Tentar chmod via Runtime
+            try {
+                val chmodProcess = Runtime.getRuntime().exec(arrayOf("chmod", "755", file.absolutePath))
+                val exitCode = chmodProcess.waitFor()
+                if (exitCode != 0) {
+                    Log.w(TAG, "chmod returned non-zero: $exitCode for ${file.name}")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "chmod via Runtime failed for ${file.name}: ${e.message}")
+            }
+            
             Log.d(TAG, "Set executable: ${file.absolutePath}")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to set permissions for ${file.absolutePath}: ${e.message}")
-            file.setExecutable(true, false)
         }
     }
     
@@ -217,7 +235,9 @@ object AssetExtractor {
                 if (libPath.exists()) {
                     libPath.walk().filter { it.extension == "so" }.forEach { 
                         setExecutablePermissions(it)
+                        it.setReadable(true, false)
                     }
+                    Log.i(TAG, "All .so libraries configured")
                 }
                 
                 Log.i(TAG, "PHP binary extracted and configured successfully")
@@ -287,12 +307,19 @@ object AssetExtractor {
     
     private fun getSupportedAbi(): String {
         val supportedAbis = Build.SUPPORTED_ABIS
+        Log.i(TAG, "Device ABIs: ${supportedAbis.joinToString(", ")}")
+        
         return if (supportedAbis.contains("arm64-v8a")) {
+            Log.i(TAG, "Device is ARM64 compatible")
             "arm64-v8a"
         } else {
             Log.e(TAG, "Device is not ARM64! Supported ABIs: ${supportedAbis.joinToString(", ")}")
             Log.e(TAG, "This app only supports ARM64 (64-bit) Android devices")
-            throw UnsupportedOperationException("Only ARM64 (64-bit) devices are supported")
+            Log.e(TAG, "Your device appears to be: ${supportedAbis.firstOrNull() ?: "unknown"}")
+            throw UnsupportedOperationException(
+                "Dispositivo não suportado. Este aplicativo requer ARM64 (64-bit).\n" +
+                "Seu dispositivo é: ${supportedAbis.firstOrNull() ?: "desconhecido"}"
+            )
         }
     }
     

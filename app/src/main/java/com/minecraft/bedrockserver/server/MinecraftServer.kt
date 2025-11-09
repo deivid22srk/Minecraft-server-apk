@@ -104,6 +104,7 @@ class MinecraftServer(private val context: Context) {
                 return@withContext
             }
             
+            // Tornar todos os binários executáveis
             phpBinary.setExecutable(true, false)
             
             try {
@@ -117,6 +118,41 @@ class MinecraftServer(private val context: Context) {
                 addConsoleLog("⚠️ PHP binary não tem permissão de execução, tentando workaround...")
             }
             
+            // Testar o binário PHP primeiro
+            addConsoleLog("Testando compatibilidade do binário PHP...")
+            try {
+                val testProcess = ProcessBuilder(
+                    phpBinary.absolutePath, "-v"
+                ).apply {
+                    environment()["LD_LIBRARY_PATH"] = libPath.absolutePath
+                }.start()
+                
+                testProcess.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+                val testExitCode = testProcess.exitValue()
+                
+                if (testExitCode == 126) {
+                    addConsoleLog("✗ ERRO: Binário PHP incompatível com seu dispositivo")
+                    addConsoleLog("✗ Seu dispositivo pode não suportar esta versão do PHP")
+                    addConsoleLog("✗ Verifique se seu dispositivo é ARM64 (aarch64)")
+                    return@withContext
+                } else if (testExitCode == 127) {
+                    addConsoleLog("✗ ERRO: Binário PHP não encontrado ou bibliotecas faltando")
+                    return@withContext
+                } else if (testExitCode != 0) {
+                    val errorReader = BufferedReader(InputStreamReader(testProcess.errorStream))
+                    val errors = errorReader.readLines().joinToString("\n")
+                    addConsoleLog("⚠️ Teste PHP retornou código $testExitCode")
+                    if (errors.isNotEmpty()) {
+                        addConsoleLog("Detalhes: $errors")
+                    }
+                } else {
+                    addConsoleLog("✓ Binário PHP compatível")
+                }
+            } catch (e: Exception) {
+                addConsoleLog("⚠️ Erro ao testar PHP: ${e.message}")
+                Log.w(TAG, "PHP test failed", e)
+            }
+            
             val libPath = File(serverDir, "bin/php7/lib")
             if (!libPath.exists()) {
                 addConsoleLog("✗ Bibliotecas PHP não encontradas: ${libPath.absolutePath}")
@@ -124,28 +160,44 @@ class MinecraftServer(private val context: Context) {
             }
             
             val phpIni = File(serverDir, "bin/php7/bin/php.ini")
-            val phpIniArg = if (phpIni.exists()) "-c ${phpIni.absolutePath}" else ""
             
-            val processBuilder = ProcessBuilder(
-                "sh", "-c",
-                "export LD_LIBRARY_PATH='${libPath.absolutePath}' && " +
-                "export HOME='${serverDir.absolutePath}' && " +
-                "export TMPDIR='${context.cacheDir.absolutePath}' && " +
-                "cd '${serverDir.absolutePath}' && " +
-                "'${phpBinary.absolutePath}' $phpIniArg '${pharFile.absolutePath}' " +
-                "--data='${serverDir.absolutePath}' " +
-                "--plugins='${serverDir.absolutePath}/plugins' " +
-                "--no-wizard " +
-                "--enable-ansi 2>&1"
+            // Construir comando de forma mais robusta
+            val commandList = mutableListOf(
+                phpBinary.absolutePath
             )
             
-            processBuilder.directory(serverDir)
+            if (phpIni.exists()) {
+                commandList.add("-c")
+                commandList.add(phpIni.absolutePath)
+            }
             
-            addConsoleLog("Comando: sh -c \"...\"")
+            commandList.addAll(listOf(
+                pharFile.absolutePath,
+                "--data=${serverDir.absolutePath}",
+                "--plugins=${serverDir.absolutePath}/plugins",
+                "--no-wizard",
+                "--enable-ansi"
+            ))
+            
+            val processBuilder = ProcessBuilder(commandList)
+            
+            // Configurar variáveis de ambiente diretamente no ProcessBuilder
+            processBuilder.directory(serverDir)
+            processBuilder.environment().apply {
+                put("LD_LIBRARY_PATH", libPath.absolutePath)
+                put("HOME", serverDir.absolutePath)
+                put("TMPDIR", context.cacheDir.absolutePath)
+            }
+            
+            // Redirecionar stderr para stdout
+            processBuilder.redirectErrorStream(true)
+            
+            addConsoleLog("Comando: ${commandList.joinToString(" ")}")
             addConsoleLog("Executando: ${phpBinary.absolutePath}")
             addConsoleLog("PHAR: ${pharFile.absolutePath}")
             addConsoleLog("Diretório: ${serverDir.absolutePath}")
             addConsoleLog("LD_LIBRARY_PATH: ${libPath.absolutePath}")
+            addConsoleLog("Variáveis de ambiente configuradas")
             
             serverProcess = processBuilder.start()
             
@@ -157,11 +209,40 @@ class MinecraftServer(private val context: Context) {
                     val exitCode = serverProcess?.exitValue() ?: -1
                     addConsoleLog("✗ Exit code: $exitCode")
                     
-                    val errorStream = serverProcess?.errorStream
+                    // Interpretação dos códigos de saída
+                    when (exitCode) {
+                        126 -> {
+                            addConsoleLog("✗ ERRO 126: Binário não pode ser executado")
+                            addConsoleLog("  Possíveis causas:")
+                            addConsoleLog("  1. Binário incompatível com a arquitetura do dispositivo")
+                            addConsoleLog("  2. Falta de permissões de execução")
+                            addConsoleLog("  3. Bibliotecas compartilhadas incompatíveis")
+                            addConsoleLog("")
+                            addConsoleLog("  Verifique se seu dispositivo é ARM64 (não ARM32)")
+                        }
+                        127 -> {
+                            addConsoleLog("✗ ERRO 127: Comando não encontrado")
+                            addConsoleLog("  O binário PHP ou suas dependências não foram encontrados")
+                        }
+                        else -> {
+                            addConsoleLog("✗ Processo terminou com código: $exitCode")
+                        }
+                    }
+                    
+                    // Ler saída de erro
+                    val errorStream = serverProcess?.inputStream
                     if (errorStream != null) {
                         val errorReader = BufferedReader(InputStreamReader(errorStream))
-                        val errors = errorReader.readLines()
-                        errors.forEach { addConsoleLog("ERROR: $it") }
+                        val errors = mutableListOf<String>()
+                        var line: String?
+                        while (errorReader.readLine().also { line = it } != null) {
+                            errors.add(line!!)
+                        }
+                        if (errors.isNotEmpty()) {
+                            addConsoleLog("")
+                            addConsoleLog("Saída do processo:")
+                            errors.forEach { addConsoleLog("  $it") }
+                        }
                     }
                 } catch (e: Exception) {
                     addConsoleLog("✗ Não foi possível ler erro: ${e.message}")
