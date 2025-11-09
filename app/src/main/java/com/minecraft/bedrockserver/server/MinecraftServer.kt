@@ -18,7 +18,6 @@ class MinecraftServer(private val context: Context) {
     private val TAG = "MinecraftServer"
     private var serverProcess: Process? = null
     private var outputReaderJob: Job? = null
-    private var errorReaderJob: Job? = null
     private var commandWriter: OutputStreamWriter? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
@@ -124,24 +123,30 @@ class MinecraftServer(private val context: Context) {
             }
             
             val phpIni = File(serverDir, "bin/php7/bin/php.ini")
-            val phpIniArg = if (phpIni.exists()) "-c ${phpIni.absolutePath}" else ""
             
-            val processBuilder = ProcessBuilder(
-                "sh", "-c",
-                "export LD_LIBRARY_PATH='${libPath.absolutePath}' && " +
-                "export HOME='${serverDir.absolutePath}' && " +
-                "export TMPDIR='${context.cacheDir.absolutePath}' && " +
-                "cd '${serverDir.absolutePath}' && " +
-                "'${phpBinary.absolutePath}' $phpIniArg '${pharFile.absolutePath}' " +
-                "--data='${serverDir.absolutePath}' " +
-                "--plugins='${serverDir.absolutePath}/plugins' " +
-                "--no-wizard " +
-                "--enable-ansi 2>&1"
-            )
+            val command = mutableListOf<String>()
+            command.add(phpBinary.absolutePath)
+            if (phpIni.exists()) {
+                command.add("-c")
+                command.add(phpIni.absolutePath)
+            }
+            command.add(pharFile.absolutePath)
+            command.add("--data=${serverDir.absolutePath}")
+            command.add("--plugins=${serverDir.absolutePath}/plugins")
+            command.add("--no-wizard")
+            command.add("--enable-ansi")
+
+            val processBuilder = ProcessBuilder(command)
+
+            val environment = processBuilder.environment()
+            environment["LD_LIBRARY_PATH"] = libPath.absolutePath
+            environment["HOME"] = serverDir.absolutePath
+            environment["TMPDIR"] = context.cacheDir.absolutePath
             
             processBuilder.directory(serverDir)
+            processBuilder.redirectErrorStream(true)
             
-            addConsoleLog("Comando: sh -c \"...\"")
+            addConsoleLog("Comando: ${command.joinToString(" ")}")
             addConsoleLog("Executando: ${phpBinary.absolutePath}")
             addConsoleLog("PHAR: ${pharFile.absolutePath}")
             addConsoleLog("Diretório: ${serverDir.absolutePath}")
@@ -172,18 +177,6 @@ class MinecraftServer(private val context: Context) {
             
             commandWriter = OutputStreamWriter(serverProcess!!.outputStream)
             _isRunning.value = true
-            
-            errorReaderJob = scope.launch {
-                try {
-                    val errorReader = BufferedReader(InputStreamReader(serverProcess!!.errorStream))
-                    var line: String?
-                    while (errorReader.readLine().also { line = it } != null && _isRunning.value) {
-                        line?.let { addConsoleLog("[ERROR] $it") }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Erro ao ler stderr", e)
-                }
-            }
             
             outputReaderJob = scope.launch {
                 try {
@@ -265,7 +258,6 @@ class MinecraftServer(private val context: Context) {
             serverProcess?.destroy()
             
             outputReaderJob?.cancel()
-            errorReaderJob?.cancel()
             commandWriter?.close()
             
             serverProcess?.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
@@ -277,7 +269,6 @@ class MinecraftServer(private val context: Context) {
             serverProcess = null
             commandWriter = null
             outputReaderJob = null
-            errorReaderJob = null
             
             _isRunning.value = false
             _playersOnline.value = 0
