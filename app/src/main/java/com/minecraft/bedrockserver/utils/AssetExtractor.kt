@@ -103,6 +103,8 @@ object AssetExtractor {
         createServerProperties(baseDir)
         createPocketMineYml(baseDir)
         createServerYml(baseDir)
+
+        setPermissionsRecursively(baseDir)
     }
     
     private fun createServerYml(baseDir: File) {
@@ -164,6 +166,15 @@ object AssetExtractor {
             Log.w(TAG, "Failed to set permissions for ${file.absolutePath}: ${e.message}")
             file.setExecutable(true, false)
         }
+    }
+
+    private fun setPermissionsRecursively(file: File) {
+        if (file.isDirectory) {
+            file.listFiles()?.forEach {
+                setPermissionsRecursively(it)
+            }
+        }
+        setExecutablePermissions(file)
     }
     
     private fun downloadAndExtractPhpBinary(baseDir: File) {
