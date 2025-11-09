@@ -96,13 +96,12 @@ object AssetExtractor {
     
     private fun getSupportedAbi(): String {
         val supportedAbis = Build.SUPPORTED_ABIS
-        return when {
-            supportedAbis.contains("arm64-v8a") -> "arm64-v8a"
-            supportedAbis.contains("armeabi-v7a") -> "armeabi-v7a"
-            else -> {
-                Log.w(TAG, "No supported ABI found, defaulting to arm64-v8a")
-                "arm64-v8a"
-            }
+        return if (supportedAbis.contains("arm64-v8a")) {
+            "arm64-v8a"
+        } else {
+            Log.e(TAG, "Device is not ARM64! Supported ABIs: ${supportedAbis.joinToString(", ")}")
+            Log.e(TAG, "This app only supports ARM64 (64-bit) Android devices")
+            throw UnsupportedOperationException("Only ARM64 (64-bit) devices are supported")
         }
     }
     

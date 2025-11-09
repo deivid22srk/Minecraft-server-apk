@@ -20,11 +20,12 @@
 - 📥 **Importação do Aternos** - Traga seu mundo do Aternos para o servidor local
 - 📱 **Console em Tempo Real** - Visualize logs e execute comandos
 - 🔔 **Notificação Persistente** - Servidor roda em segundo plano
-- 🎯 **Suporte ARM** - Otimizado para dispositivos ARM64 e ARMv7
+- 🎯 **Suporte ARM64** - Otimizado para dispositivos Android 64-bit
 
 ## 📋 Requisitos
 
-- Android 7.0 (API 24) ou superior
+- **Android 7.0 (API 24) ou superior**
+- **Dispositivo ARM64 (64-bit) - ARMv7 (32-bit) não é suportado**
 - Mínimo 2GB de RAM recomendado
 - Conexão com internet para servidor público
 - Permissões de notificação (Android 13+)
